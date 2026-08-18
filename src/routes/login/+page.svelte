@@ -7,12 +7,25 @@
 	let errorMessage = $state('');
 	let loading = $state(false);
 
+	// Misma validación inline en tono de la Agencia que en /register (1.7 del
+	// informe UX) — el mismo hallazgo cubre ambas pantallas.
+	let fieldErrors = $state<{ email?: string; password?: string }>({});
+
+	function validateFields(): boolean {
+		const errors: typeof fieldErrors = {};
+		if (!email.trim()) errors.email = 'Falta tu correo de contacto, Agente.';
+		if (!password) errors.password = 'Falta tu clave de acceso.';
+		fieldErrors = errors;
+		return Object.keys(errors).length === 0;
+	}
+
 	const targetEvent = $derived(page.url.searchParams.get('event') || 'demo');
 
 	async function handleLogin(e: Event) {
 		e.preventDefault();
 		if (loading) return;
 		errorMessage = '';
+		if (!validateFields()) return;
 		loading = true;
 
 		try {
@@ -24,13 +37,13 @@
 
 			const data = await res.json();
 			if (!res.ok || data.error) {
-				errorMessage = data.error || 'Error al iniciar sesión';
+				errorMessage = data.error || 'La Agencia no pudo verificar tu credencial en este intento.';
 				loading = false;
 			} else {
 				await goto(`/${targetEvent}`);
 			}
 		} catch (err: any) {
-			errorMessage = err.message || 'Error de conexión';
+			errorMessage = 'La Agencia perdió la señal — revisa tu conexión y reintenta.';
 			loading = false;
 		}
 	}
@@ -46,16 +59,18 @@
 			<div class="error-banner">{errorMessage}</div>
 		{/if}
 
-		<form onsubmit={handleLogin}>
+		<form onsubmit={handleLogin} novalidate>
 			<fieldset disabled={loading} class="form-fieldset">
 				<div class="form-group">
 					<label for="email">Correo Electrónico</label>
-					<input id="email" type="email" bind:value={email} placeholder="agente@eventgage.com" required />
+					<input id="email" type="email" bind:value={email} placeholder="agente@eventgage.com" class:field-invalid={fieldErrors.email} aria-invalid={!!fieldErrors.email} />
+					{#if fieldErrors.email}<span class="field-error">{fieldErrors.email}</span>{/if}
 				</div>
 
 				<div class="form-group">
 					<label for="password">Contraseña</label>
-					<input id="password" type="password" bind:value={password} placeholder="••••••••" required />
+					<input id="password" type="password" bind:value={password} placeholder="••••••••" class:field-invalid={fieldErrors.password} aria-invalid={!!fieldErrors.password} />
+					{#if fieldErrors.password}<span class="field-error">{fieldErrors.password}</span>{/if}
 				</div>
 
 				<button type="submit" class="submit-btn" disabled={loading}>
@@ -183,6 +198,17 @@
 		outline: none;
 		border-color: #818cf8;
 		box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.2);
+	}
+
+	input.field-invalid {
+		border-color: #f87171;
+	}
+
+	.field-error {
+		display: block;
+		margin-top: 0.4rem;
+		font-size: 0.8rem;
+		color: #fca5a5;
 	}
 
 	.submit-btn {

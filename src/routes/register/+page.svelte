@@ -8,12 +8,31 @@
 	let errorMessage = $state('');
 	let loading = $state(false);
 
+	// Validación inline en tono de la Agencia (1.7 del informe UX): antes
+	// dependía 100% de `required` nativo del navegador, que en iOS Safari a
+	// menudo no muestra ninguna burbuja visible. Se valida acá antes de tocar
+	// el servidor, con mensajes bajo cada campo, no un banner rojo genérico.
+	let fieldErrors = $state<{ fullName?: string; email?: string; password?: string }>({});
+	const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+	function validateFields(): boolean {
+		const errors: typeof fieldErrors = {};
+		if (!fullName.trim()) errors.fullName = 'La Agencia necesita un nombre de Agente para tu expediente.';
+		if (!email.trim()) errors.email = 'Falta tu correo de contacto, Agente.';
+		else if (!EMAIL_PATTERN.test(email.trim())) errors.email = 'Ese formato de correo no es válido para registrar tu credencial.';
+		if (!password) errors.password = 'Toda credencial necesita una clave de acceso.';
+		else if (password.length < 6) errors.password = 'Tu clave de acceso necesita al menos 6 caracteres.';
+		fieldErrors = errors;
+		return Object.keys(errors).length === 0;
+	}
+
 	const targetEvent = $derived(page.url.searchParams.get('event') || 'demo');
 
 	async function handleRegister(e: Event) {
 		e.preventDefault();
 		if (loading) return;
 		errorMessage = '';
+		if (!validateFields()) return;
 		loading = true;
 
 		try {
@@ -25,13 +44,13 @@
 
 			const data = await res.json();
 			if (!res.ok || data.error) {
-				errorMessage = data.error || 'Error al crear la cuenta';
+				errorMessage = data.error || 'La Agencia no pudo abrir tu expediente en este intento.';
 				loading = false;
 			} else {
 				await goto(`/${targetEvent}`);
 			}
 		} catch (err: any) {
-			errorMessage = err.message || 'Error de conexión';
+			errorMessage = 'La Agencia perdió la señal — revisa tu conexión y reintenta.';
 			loading = false;
 		}
 	}
@@ -47,21 +66,24 @@
 			<div class="error-banner">{errorMessage}</div>
 		{/if}
 
-		<form onsubmit={handleRegister}>
+		<form onsubmit={handleRegister} novalidate>
 			<fieldset disabled={loading} class="form-fieldset">
 				<div class="form-group">
 					<label for="fullName">Nombre de Agente / Nombre Completo</label>
-					<input id="fullName" type="text" bind:value={fullName} placeholder="Ej. Alex Vance" required />
+					<input id="fullName" type="text" bind:value={fullName} placeholder="Ej. Alex Vance" class:field-invalid={fieldErrors.fullName} aria-invalid={!!fieldErrors.fullName} />
+					{#if fieldErrors.fullName}<span class="field-error">{fieldErrors.fullName}</span>{/if}
 				</div>
 
 				<div class="form-group">
 					<label for="email">Correo Electrónico</label>
-					<input id="email" type="email" bind:value={email} placeholder="agente@eventgage.com" required />
+					<input id="email" type="email" bind:value={email} placeholder="agente@eventgage.com" class:field-invalid={fieldErrors.email} aria-invalid={!!fieldErrors.email} />
+					{#if fieldErrors.email}<span class="field-error">{fieldErrors.email}</span>{/if}
 				</div>
 
 				<div class="form-group">
 					<label for="password">Contraseña</label>
-					<input id="password" type="password" bind:value={password} placeholder="••••••••" required />
+					<input id="password" type="password" bind:value={password} placeholder="••••••••" class:field-invalid={fieldErrors.password} aria-invalid={!!fieldErrors.password} />
+					{#if fieldErrors.password}<span class="field-error">{fieldErrors.password}</span>{/if}
 				</div>
 
 				<button type="submit" class="submit-btn" disabled={loading}>
@@ -190,6 +212,17 @@
 		outline: none;
 		border-color: #818cf8;
 		box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.2);
+	}
+
+	input.field-invalid {
+		border-color: #f87171;
+	}
+
+	.field-error {
+		display: block;
+		margin-top: 0.4rem;
+		font-size: 0.8rem;
+		color: #fca5a5;
 	}
 
 	.submit-btn {

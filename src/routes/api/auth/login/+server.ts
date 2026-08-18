@@ -1,22 +1,59 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { supabaseAuth, supabaseServer } from '$lib/server/supabaseClient';
+import { createSignedSession } from '$lib/server/session';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
 	try {
-		const { email } = await request.json();
+		const { email, password } = await request.json();
 
-		if (!email) {
-			return json({ error: 'Email requerido' }, { status: 400 });
+		if (!email || !password) {
+			return json({ error: 'La Agencia necesita tu correo y tu clave de acceso para verificarte, Agente.' }, { status: 400 });
 		}
 
-		const userId = 'usr_' + Math.random().toString(36).substr(2, 9);
+		const cleanEmail = email.toLowerCase().trim();
+
+		let userId: string | null = null;
+		let fullName = 'Agente';
+
+		// 1. Intentar autenticar con Supabase Auth
+		const { data: authData, error: authError } = await supabaseAuth.auth.signInWithPassword({
+			email: cleanEmail,
+			password: password
+		});
+
+		if (authData?.user) {
+			userId = authData.user.id;
+			fullName = authData.user.user_metadata?.full_name || 'Agente';
+
+			// Registrar/Asegurar el perfil explícito en bem.eventgage_user al ingresar a Eventgage
+			await supabaseServer
+				.from('eventgage_user')
+				.upsert(
+					{
+						id: userId,
+						email: cleanEmail,
+						full_name: fullName,
+						created_at: new Date().toISOString()
+					},
+					{ onConflict: 'id' }
+				);
+		} else {
+			if (authError?.message?.includes('Invalid login credentials')) {
+				return json({ error: 'La Agencia no reconoce esa combinación de correo y clave. Verifica tus datos, Agente.' }, { status: 400 });
+			}
+			return json({ error: 'La Agencia no pudo verificar tu credencial en este intento. Vuelve a intentarlo.' }, { status: 400 });
+		}
+
 		const userObj = {
 			id: userId,
-			email: email.toLowerCase().trim(),
-			full_name: 'Agente Demo'
+			email: cleanEmail,
+			full_name: fullName
 		};
 
-		cookies.set('eventgage_session', JSON.stringify(userObj), {
+		const signedSession = createSignedSession(userObj);
+
+		cookies.set('eventgage_session', signedSession, {
 			path: '/',
 			httpOnly: true,
 			sameSite: 'lax',
@@ -25,6 +62,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 		return json({ success: true, user: userObj });
 	} catch (e: any) {
-		return json({ error: e.message || 'Error en el servidor' }, { status: 500 });
+		console.error('Login API Error:', e);
+		return json({ error: 'La Agencia perdió la señal a mitad de la verificación. No es tu credencial — reintenta en unos segundos.' }, { status: 400 });
 	}
 };

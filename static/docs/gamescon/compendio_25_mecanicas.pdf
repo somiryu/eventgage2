@@ -1,0 +1,165 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 4 0 R /F2 5 0 R /F3 6 0 R >> >> /Contents 7 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold >>
+endobj
+7 0 obj
+<< /Length 1847 >>
+stream
+
+q
+0.06 0.09 0.16 rg
+0 0 595.28 841.89 re f
+Q
+
+% Header Card
+q
+0.12 0.16 0.24 rg
+30 740 535.28 70 re f
+0.98 0.75 0.15 RG
+1.5 w
+30 740 535.28 70 re s
+Q
+
+% Header Title
+BT
+/F1 16 Tf
+1 1 1 rg
+45 780 Td
+(COMPENDIO TACTICO: 25 MECANICAS NO CONVENCIONALES) Tj
+ET
+
+% Header Subtitle
+BT
+/F2 9.5 Tf
+0.58 0.64 0.72 rg
+45 755 Td
+(Catalogo Avanzado de Diseno Conductual mas alla de Puntos y Medallas) Tj
+ET
+
+% Section Heading
+BT
+/F1 12 Tf
+0.98 0.75 0.15 rg
+35 691 Td
+(1. MECANICAS DE TENSION Y COOPERACION) Tj
+ET
+
+% Card Box
+q
+0.09 0.13 0.20 rg
+30 596 535.28 85 re f
+0.2 0.28 0.4 RG
+0.75 w
+30 596 535.28 85 re s
+Q
+
+BT
+/F1 10.5 Tf
+0.14 0.83 0.93 rg
+42 663 Td
+(Mecanicas de Alta Inmersion) Tj
+ET
+
+BT
+/F2 9 Tf
+0.88 0.91 0.96 rg
+42 649 Td
+(Bombas de Tiempo \(Time Bombs\): Tension temporal calibrada para romper la pasividad.) Tj
+ET
+
+BT
+/F2 9 Tf
+0.88 0.91 0.96 rg
+42 636 Td
+(Votacion Colectiva Sincronica: Toma de postura publica para detonar debate entre facciones.) Tj
+ET
+
+BT
+/F2 9 Tf
+0.88 0.91 0.96 rg
+42 623 Td
+(Antagonista Sistemico: Enemigo comun del entorno que exige colaboracion interdepartamental.) Tj
+ET
+
+BT
+/F2 9 Tf
+0.88 0.91 0.96 rg
+42 610 Td
+(Ficha de Reintento \(Fail Smart\): Mecanica de segunda oportunidad que premia el aprendizaje.) Tj
+ET
+
+% Section Heading
+BT
+/F1 12 Tf
+0.98 0.75 0.15 rg
+35 572 Td
+(2. MECANICAS DE IDENTIDAD Y AGENCIA) Tj
+ET
+
+BT
+/F1 9 Tf
+0.98 0.75 0.15 rg
+40 556 Td
+(>) Tj
+/F2 9 Tf
+0.88 0.91 0.96 rg
+52 556 Td
+(Especializacion de Roles: Atributos complementarios que generan interdependencia.) Tj
+ET
+
+BT
+/F1 9 Tf
+0.98 0.75 0.15 rg
+40 540 Td
+(>) Tj
+/F2 9 Tf
+0.88 0.91 0.96 rg
+52 540 Td
+(Desclasificacion Progresiva: Lore y herramientas desbloqueadas por hitos de maestria.) Tj
+ET
+
+% Footer
+q
+0.2 0.28 0.4 RG
+0.5 w
+30 35 535.28 0.5 re f
+Q
+BT
+/F2 8 Tf
+0.45 0.52 0.62 rg
+35 22 Td
+(BEM Framework · Gamescon Executive Brief) Tj
+ET
+
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000266 00000 n 
+0000000346 00000 n 
+0000000421 00000 n 
+0000000499 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R >>
+startxref
+2417
+%%EOF
