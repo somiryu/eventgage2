@@ -3,8 +3,19 @@ import { env as privateEnv } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import { dev } from '$app/environment';
 
-const supabaseUrl = publicEnv.PUBLIC_SUPABASE_URL || privateEnv.PUBLIC_SUPABASE_URL || '';
-const supabaseKey = privateEnv.SUPABASE_SERVICE_ROLE_KEY || publicEnv.PUBLIC_SUPABASE_ANON_KEY || privateEnv.PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl =
+	publicEnv.PUBLIC_SUPABASE_URL ||
+	privateEnv.PUBLIC_SUPABASE_URL ||
+	(typeof process !== 'undefined' ? process.env?.PUBLIC_SUPABASE_URL : '') ||
+	'';
+
+const supabaseKey =
+	privateEnv.SUPABASE_SERVICE_ROLE_KEY ||
+	(typeof process !== 'undefined' ? process.env?.SUPABASE_SERVICE_ROLE_KEY : '') ||
+	publicEnv.PUBLIC_SUPABASE_ANON_KEY ||
+	privateEnv.PUBLIC_SUPABASE_ANON_KEY ||
+	(typeof process !== 'undefined' ? process.env?.PUBLIC_SUPABASE_ANON_KEY : '') ||
+	'';
 
 // En desarrollo local, si hay un Postgres+PostgREST nativo levantado (ver
 // supabase/dev/), los datos del juego (`bem.*`) se leen de ahí en vez del
@@ -12,8 +23,8 @@ const supabaseKey = privateEnv.SUPABASE_SERVICE_ROLE_KEY || publicEnv.PUBLIC_SUP
 // mismo cliente supabase-js — solo cambia el endpoint de destino. El
 // override NUNCA se activa fuera de `dev`, así que no hay forma de que esto
 // llegue a producción.
-const localGameDataUrl = dev ? privateEnv.LOCAL_SUPABASE_URL : undefined;
-const localGameDataKey = dev ? privateEnv.LOCAL_SUPABASE_SERVICE_KEY : undefined;
+const localGameDataUrl = dev ? privateEnv.LOCAL_SUPABASE_URL || (typeof process !== 'undefined' ? process.env?.LOCAL_SUPABASE_URL : undefined) : undefined;
+const localGameDataKey = dev ? privateEnv.LOCAL_SUPABASE_SERVICE_KEY || (typeof process !== 'undefined' ? process.env?.LOCAL_SUPABASE_SERVICE_KEY : undefined) : undefined;
 
 const gameDataUrl = localGameDataUrl || supabaseUrl;
 const gameDataKey = localGameDataKey || supabaseKey;
