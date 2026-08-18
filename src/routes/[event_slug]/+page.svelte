@@ -62,8 +62,8 @@
 
 	// Estado local reactivo
 	let activeTab = $state<'hud' | 'missions' | 'items' | 'map' | 'feed' | 'profile'>('hud');
-	let player = $state<any>(null);
-	let selectedFactionId = $state('');
+	let player = $state<any>(data.playerState);
+	let selectedFactionId = $state(data.factions?.[0]?.id || '');
 	let joining = $state(false);
 	let joinError = $state('');
 
@@ -93,14 +93,14 @@
 	// Los handlers de acción actualizan estos dos con lo que devuelve el
 	// servidor (ver attachWorldState en eventService.ts), sin pedir un segundo
 	// endpoint.
-	let factionsState = $state<any[]>([]);
-	let eventPointsState = $state<any>(null);
+	let factionsState = $state<any[]>(data.factions || []);
+	let eventPointsState = $state<any>(data.eventPoints || null);
 	// Fix del bug is_public (docs/system_capabilities_and_mechanics.md 2.13):
 	// un ítem público arranca bloqueado para todos y se desbloquea acá recién
 	// cuando el servidor confirma que alguien lo descubrió primero (carga
 	// inicial de `data.event.global_unlocked_items`, actualizado en vivo por
 	// el broadcast `item_unlocked_globally`).
-	let globalUnlockedItemsState = $state<string[]>([]);
+	let globalUnlockedItemsState = $state<string[]>(data.event?.global_unlocked_items || []);
 	// Notificación en vivo de "te escanearon" (Juego de Contactos) — llega por
 	// Realtime Broadcast, filtrada del lado del cliente por targetUserId.
 	let contactScannedNotification = $state<{ scannerName: string; xp: number; cp: number } | null>(null);
@@ -108,7 +108,7 @@
 	// carga inicial desde `eventgage_event_activity_feed` (persistente), y se
 	// antepone en vivo con los mismos eventos que ya llegan por
 	// subscribeToEventActivity — un solo canal alimenta ambas cosas.
-	let activityFeed = $state<any[]>([]);
+	let activityFeed = $state<any[]>(data.activityFeed || []);
 	function describeActivity(entry: any): string {
 		if (entry.type === 'item_unlocked_globally') {
 			return `¡Toda la comunidad desbloqueó "${entry.payload?.itemName}"!`;
@@ -139,22 +139,13 @@
 	// No-reactivo a propósito: el toggle de sonido (handleToggleSound) ya
 	// mantiene `audioSettings.enabled` al día en cada cambio dentro de la
 	// sesión, así que acá solo hace falta levantar la preferencia persistida
-	// UNA vez al llegar el primer playerState. Sincronizarlo en cada corrida
-	// del efecto (leyendo `player` y escribiendo el estado del módulo de audio
-	// en el mismo efecto) producía un bucle de actualización infinito.
+	// UNA vez al llegar el primer playerState.
 	let soundInitialized = false;
 
 	$effect(() => {
-		player = data.playerState;
-		factionsState = data.factions || [];
-		eventPointsState = data.eventPoints || null;
-		globalUnlockedItemsState = data.event?.global_unlocked_items || [];
-		activityFeed = data.activityFeed || [];
-		if (!selectedFactionId && data.factions?.[0]?.id) {
-			selectedFactionId = data.factions[0].id;
-		}
-		if (!soundInitialized && player?.settings) {
-			setSoundEnabled(player.settings.sound !== false);
+		const soundSetting = player?.settings?.sound;
+		if (!soundInitialized && soundSetting !== undefined) {
+			setSoundEnabled(soundSetting !== false);
 			soundInitialized = true;
 		}
 	});
