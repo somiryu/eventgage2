@@ -17,9 +17,12 @@ function agencyAuthErrorMessage(rawMessage: string | undefined): string {
 		return 'Ese correo no tiene un formato válido para registrar tu credencial, Agente.';
 	}
 	if (msg.includes('password')) {
-		return 'Tu clave de acceso no cumple los requisitos mínimos de seguridad de la Agencia.';
+		return `Tu clave de acceso no cumple los requisitos: ${rawMessage}`;
 	}
-	return 'La Agencia no pudo validar tu credencial en este intento. Verifica los datos y vuelve a intentarlo.';
+	if (msg.includes('rate limit')) {
+		return 'Límite de registros alcanzado temporalmente por Supabase. Reintenta en unos instantes.';
+	}
+	return rawMessage ? `La Agencia reporta: ${rawMessage}` : 'No se pudo crear el expediente en este intento. Reintenta en unos segundos.';
 }
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
@@ -36,25 +39,45 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 		const cleanEmail = email.toLowerCase().trim();
 
-		// 1. Registrar usuario en Supabase Auth
-		const { data: signUpData, error: signUpError } = await supabaseAuth.auth.signUp({
+		// 1. Crear usuario en Supabase Auth directamente (sin límite de envío SMTP y auto-confirmado)
+		let userId: string;
+		let authUser = null;
+
+		const { data: adminData, error: adminError } = await supabaseServer.auth.admin.createUser({
 			email: cleanEmail,
 			password: password,
-			options: {
-				data: { full_name: full_name || 'Agente' }
-			}
+			email_confirm: true,
+			user_metadata: { full_name: full_name || 'Agente' }
 		});
 
-		if (signUpError) {
-			console.error('Supabase Auth error:', signUpError);
-			return json({ error: agencyAuthErrorMessage(signUpError.message) }, { status: 400 });
+		if (adminError) {
+			// Si falla por ya registrado u otro motivo, probar fallback estándar
+			console.warn('[register] admin.createUser note:', adminError.message);
+			if (adminError.message.toLowerCase().includes('already registered') || adminError.message.toLowerCase().includes('already exists')) {
+				return json({ error: 'Ya existe una credencial de Agente con ese correo. Si es tuya, usa "Iniciar Sesión".' }, { status: 400 });
+			}
+
+			// Fallback a signUp estándar si admin API no estuviera disponible
+			const { data: signUpData, error: signUpError } = await supabaseAuth.auth.signUp({
+				email: cleanEmail,
+				password: password,
+				options: { data: { full_name: full_name || 'Agente' } }
+			});
+
+			if (signUpError) {
+				console.error('[register] signUp fallback error:', signUpError);
+				return json({ error: agencyAuthErrorMessage(signUpError.message || adminError.message) }, { status: 400 });
+			}
+			authUser = signUpData.user;
+		} else {
+			authUser = adminData.user;
 		}
 
-		if (!signUpData.user) {
+		if (!authUser) {
 			return json({ error: 'La Agencia no pudo abrir tu expediente en este intento. Vuelve a intentarlo en unos segundos.' }, { status: 400 });
 		}
 
-		const userId = signUpData.user.id;
+		userId = authUser.id;
 
 		// 2. Garantizar perfil en bem.eventgage_user
 		const { data: userProfile, error: dbError } = await supabaseServer

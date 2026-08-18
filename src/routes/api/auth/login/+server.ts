@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			if (authError?.message?.includes('Invalid login credentials')) {
 				return json({ error: 'La Agencia no reconoce esa combinación de correo y clave. Verifica tus datos, Agente.' }, { status: 400 });
 			}
-			return json({ error: 'La Agencia no pudo verificar tu credencial en este intento. Vuelve a intentarlo.' }, { status: 400 });
+			return json({ error: authError?.message ? `La Agencia reporta: ${authError.message}` : 'La Agencia no pudo verificar tu credencial en este intento. Vuelve a intentarlo.' }, { status: 400 });
 		}
 
 		const userObj = {
