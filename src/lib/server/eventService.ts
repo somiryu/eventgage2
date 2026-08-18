@@ -1,6 +1,6 @@
 import { supabaseServer, supabaseRealtime } from './supabaseClient';
 import { dev } from '$app/environment';
-import { evaluateAiPromptChallenge } from './giocchiService';
+import { evaluateAiPromptChallenge, AI_PROMPT_FALLBACK_FEEDBACK, AI_PROMPT_FALLBACK_XP } from './giocchiService';
 
 /**
  * Sirve contenido de ejemplo SOLO en desarrollo local cuando Supabase no responde
@@ -2143,7 +2143,7 @@ async function resolveTriviaQuiz(userId: string, eventId: string, player: any, s
 	};
 }
 
-async function resolveAiPromptChallenge(userId: string, eventId: string, player: any, status: any, mission: any, answerText?: string) {
+async function resolveAiPromptChallenge(userId: string, eventId: string, player: any, status: any, mission: any, answerText?: string, skipAi?: boolean) {
 	const trimmed = (answerText || '').trim();
 	if (trimmed.length < 20 || trimmed.length > 300) {
 		return { success: false, message: 'Tu respuesta debe tener entre 20 y 300 caracteres.' };
@@ -2152,17 +2152,26 @@ async function resolveAiPromptChallenge(userId: string, eventId: string, player:
 	const factionName = player?.avatar?.faction_name || player?.avatar?.faction?.name;
 	const avatarName = player?.avatar?.name || player?.avatar?.title;
 
-	// Invocación a GIOCCHI: consulta Gemini + contexto BEM Brain MCP. Los IDs
-	// reales (no los nombres) son los que indexan mechanic.faction_variants/
-	// avatar_variants — mismo texto que ya vio el jugador en el modal.
-	const evaluation = await evaluateAiPromptChallenge({
-		userInput: trimmed,
-		mission,
-		playerFactionName: factionName,
-		playerAvatarName: avatarName,
-		playerFactionId: player?.avatar?.faction_id,
-		playerAvatarId: player?.avatar?.avatar_id
-	});
+	// Invocación a GIOCCHI: si el usuario solicita respuesta rápida (skipAi),
+	// se usa el fallback offline inmediato sin llamar a Gemini.
+	let evaluation;
+	if (skipAi) {
+		const fallbackFeedback = mission?.mechanic?.fallback_feedback || mission?.mechanic?.offline_feedback || AI_PROMPT_FALLBACK_FEEDBACK;
+		evaluation = {
+			feedback_text: fallbackFeedback,
+			xp_awarded: AI_PROMPT_FALLBACK_XP,
+			isFallback: true
+		};
+	} else {
+		evaluation = await evaluateAiPromptChallenge({
+			userInput: trimmed,
+			mission,
+			playerFactionName: factionName,
+			playerAvatarName: avatarName,
+			playerFactionId: player?.avatar?.faction_id,
+			playerAvatarId: player?.avatar?.avatar_id
+		});
+	}
 
 	const rewards = mission.mechanic?.rewards || {};
 	const xpBase = typeof rewards.xp_base === 'number' ? rewards.xp_base : 30;
@@ -2198,7 +2207,7 @@ async function resolveAiPromptChallenge(userId: string, eventId: string, player:
 	}
 
 	const baseMsg = evaluation.isFallback
-		? `GIOCCHI registró tu reflexión en la Bitácora (modo offline). +${xpTotal} XP, +${cpReward} 💠.`
+		? `GIOCCHI registró tu reflexión en la Bitácora (modo offline / respuesta rápida). +${xpTotal} XP, +${cpReward} 💠.`
 		: `GIOCCHI evaluó tu reflexión (+${evaluation.xp_awarded} XP por pertinencia). +${xpTotal} XP total, +${cpReward} 💠.`;
 
 	return {
@@ -2216,7 +2225,7 @@ export async function resolveMissionForPlayer(
 	userId: string,
 	eventId: string,
 	missionId: string,
-	payload: { optionId?: string; answerText?: string } = {}
+	payload: { optionId?: string; answerText?: string; skipAi?: boolean } = {}
 ) {
 	const player = await getPlayerAvatar(userId, eventId);
 	if (!player) {
@@ -2243,7 +2252,7 @@ export async function resolveMissionForPlayer(
 		case 'trivia_quiz':
 			return attachWorldState(eventId, await resolveTriviaQuiz(userId, eventId, player, status, mission, payload.optionId));
 		case 'ai_prompt_challenge':
-			return attachWorldState(eventId, await resolveAiPromptChallenge(userId, eventId, player, status, mission, payload.answerText));
+			return attachWorldState(eventId, await resolveAiPromptChallenge(userId, eventId, player, status, mission, payload.answerText, payload.skipAi));
 		default:
 			return { success: false, message: `El tipo de misión "${mission.mission_type}" no se resuelve por esta vía.` };
 	}
@@ -2305,6 +2314,56 @@ export async function resetPlayerAvatar(userId: string, eventId: string) {
 	const key = `${userId}_${eventId}`;
 	memoryStore.eventAvatars.delete(key);
 	return { success: true };
+}
+
+/**
+ * Resetea el progreso del jugador (misiones, códigos, bitácora, XP, nivel)
+ * conservando su avatar, clase, facción y nombre (Comando de QA F9 en Dev).
+ */
+export async function softResetPlayerProgress(userId: string, eventId: string) {
+	const player = await getPlayerAvatar(userId, eventId);
+	if (!player) return { success: false, message: 'Jugador no encontrado' };
+
+	const initialStatusObj = {
+		viewed_dialogues: [],
+		journal: [],
+		unlocked_items: [],
+		unlocked_missions: ['m_code_01'],
+		completed_missions: [],
+		current_mission_id: 'm_code_01',
+		redeemed_codes: [],
+		milestones_claimed: [],
+		narrative_seen: true,
+		votes: {},
+		dice_check_outcomes: {},
+		unlocked_rewards: []
+	};
+
+	const updatedAvatar = {
+		...player.avatar,
+		xp: { points: 0, level: 1 },
+		rank: 1,
+		rank_title: 'Recluta de la Red'
+	};
+
+	try {
+		await supabaseServer
+			.from('eventgage_event_avatar')
+			.update({
+				avatar: updatedAvatar,
+				game_status: initialStatusObj
+			})
+			.eq('user_id', userId)
+			.eq('event_id', eventId);
+	} catch (e) {
+		console.warn('Error al hacer soft reset en BD:', e);
+	}
+
+	const key = `${userId}_${eventId}`;
+	player.avatar = updatedAvatar;
+	player.game_status = initialStatusObj;
+	memoryStore.eventAvatars.set(key, player);
+	return { success: true, playerState: player };
 }
 
 // =========================================================================

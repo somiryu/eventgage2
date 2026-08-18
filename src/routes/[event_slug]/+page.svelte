@@ -260,6 +260,49 @@
 	let diceRollPhase = $state<'idle' | 'revealing' | 'consequences'>('idle');
 	let diceRollPreviousItemCount = 0;
 
+	// Recuperar datos de evaluación de GIOCCHI si la misión ya fue completada previamente
+	function getCompletedAiMissionData(mission: any) {
+		if (!player?.game_status?.journal || !mission) return null;
+		const targetTitle = `Bitácora: ${mission.title}`;
+		const entry = player.game_status.journal.find(
+			(j: any) => j.title === targetTitle || (mission.title && j.title?.toLowerCase().includes(mission.title.toLowerCase()))
+		);
+		if (!entry || !entry.content_html) return null;
+
+		const userMatch = entry.content_html.match(/<strong>Tu respuesta:<\/strong>\s*(.*?)(?:<\/p>|$)/s);
+		const feedbackMatch = entry.content_html.match(
+			/Análisis de GIOCCHI.*?:<\/strong>(?:<br\s*\/?>|\s)*(.*?)(?:<\/p>|$)/s
+		);
+		const xpMatch = entry.content_html.match(/\+(\d+)\s*XP/);
+
+		return {
+			userInput: userMatch ? userMatch[1].replace(/<[^>]*>/g, '').trim() : '',
+			feedback: feedbackMatch
+				? feedbackMatch[1].replace(/<br\s*\/?>/gi, '\n\n').replace(/<[^>]*>/g, '').trim()
+				: entry.content_html.replace(/<[^>]*>/g, '').trim(),
+			xpAwarded: xpMatch ? Number(xpMatch[1]) : 25
+		};
+	}
+
+	const isAiMissionCompleted = $derived(
+		selectedMission?.type === 'ai_prompt_challenge' &&
+		Boolean(selectedMission?.completed || player?.game_status?.completed_missions?.includes(selectedMission?.id))
+	);
+
+	// Modal dedicado de evaluación de GIOCCHI (Foco limpio y scrollable para retos de IA)
+	let giocchiModalData = $state<{
+		missionTitle: string;
+		userInput: string;
+		feedback: string;
+		xpAwarded: number;
+	} | null>(null);
+
+	// Cuenta regresiva y cancelación para retos de IA (GIOCCHI)
+	let aiCountdown = $state(25);
+	let aiCountdownInterval: any = null;
+	let aiAbortController: AbortController | null = null;
+	let requestingQuickFallback = $state(false);
+
 	// Al cambiar de misión seleccionada, se limpia el resultado de la anterior
 	$effect(() => {
 		selectedMission;
@@ -1307,11 +1350,22 @@
 		const previousItemCount = player?.game_status?.unlocked_items?.length || 0;
 		if (missionType === 'dice_check') playDiceRoll();
 		resolvingMission = true;
+
+		if (missionType === 'ai_prompt_challenge') {
+			aiCountdown = 25;
+			if (aiCountdownInterval) clearInterval(aiCountdownInterval);
+			aiCountdownInterval = setInterval(() => {
+				if (aiCountdown > 0) aiCountdown--;
+			}, 1000);
+			aiAbortController = new AbortController();
+		}
+
 		try {
 			const res = await fetch(`/api/event/${data.event.slug}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'resolve_mission', missionId: selectedMission.id, ...payload })
+				body: JSON.stringify({ action: 'resolve_mission', missionId: selectedMission.id, ...payload }),
+				signal: aiAbortController?.signal
 			});
 			const resData = await res.json();
 			if (!res.ok) {
@@ -1336,6 +1390,16 @@
 					if (resData.correct) playTriviaCorrect();
 					else playTriviaIncorrect();
 				}
+				if (resData.success && missionType === 'ai_prompt_challenge' && resData.feedback) {
+					giocchiModalData = {
+						missionTitle: selectedMission.title,
+						userInput: payload.answerText || aiPromptText,
+						feedback: resData.feedback,
+						xpAwarded: resData.xpAwarded || 25
+					};
+					selectedMission = null;
+					playSuccess();
+				}
 				const hasMilestone = resData.success && resData.milestonesReached?.length;
 				if (hasMilestone) {
 					milestoneOverlay = resData.milestonesReached;
@@ -1348,10 +1412,72 @@
 					if (newItemCount > previousItemCount) playItemUnlocked();
 				}
 			}
-		} catch (e) {
+		} catch (e: any) {
+			if (e?.name === 'AbortError') {
+				// Cancelado intencionalmente para usar respuesta rápida
+				return;
+			}
 			missionResult = { success: false, message: SYSTEM_ERROR_FALLBACK };
 			if (missionType === 'dice_check') diceRollPhase = 'consequences';
 		} finally {
+			if (aiCountdownInterval) {
+				clearInterval(aiCountdownInterval);
+				aiCountdownInterval = null;
+			}
+			aiAbortController = null;
+			resolvingMission = false;
+		}
+	}
+
+	// Respuesta rápida: cancela la llamada a la IA y solicita inmediatamente el fallback offline
+	async function handleQuickFallback() {
+		if (!selectedMission || requestingQuickFallback) return;
+		requestingQuickFallback = true;
+		const currentMissionTitle = selectedMission.title;
+		const currentMissionId = selectedMission.id;
+		const currentAnswer = aiPromptText;
+
+		if (aiAbortController) {
+			aiAbortController.abort();
+			aiAbortController = null;
+		}
+		if (aiCountdownInterval) {
+			clearInterval(aiCountdownInterval);
+			aiCountdownInterval = null;
+		}
+
+		try {
+			const res = await fetch(`/api/event/${data.event.slug}`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'resolve_mission',
+					missionId: currentMissionId,
+					answerText: currentAnswer,
+					skipAi: true
+				})
+			});
+			const resData = await res.json();
+			if (resData.success) {
+				if (resData.playerState) player = resData.playerState;
+				if (resData.factions) factionsState = resData.factions;
+				if (resData.eventPoints) eventPointsState = resData.eventPoints;
+				if (resData.factions || resData.eventPoints) worldStateUpdatedAt = Date.now();
+				giocchiModalData = {
+					missionTitle: currentMissionTitle,
+					userInput: currentAnswer,
+					feedback: resData.feedback,
+					xpAwarded: resData.xpAwarded || 25
+				};
+				selectedMission = null;
+				playSuccess();
+			} else {
+				missionResult = { success: false, message: resData.message || SYSTEM_ERROR_FALLBACK };
+			}
+		} catch (err) {
+			missionResult = { success: false, message: SYSTEM_ERROR_FALLBACK };
+		} finally {
+			requestingQuickFallback = false;
 			resolvingMission = false;
 		}
 	}
@@ -1428,7 +1554,7 @@
 	async function handleResetPlayer() {
 		if (!dev || resetting) return;
 		const confirmed = window.confirm(
-			'Esto borra TODO el progreso de este agente (rango, XP, Ludens, ítems, Hitos) sin poder deshacerlo. Es una herramienta de desarrollo, no algo que un jugador real debería poder tocar.\n\n¿Reiniciar de todas formas?'
+			'Esto borra TODO el progreso de este agente (rango, XP, Ludens, ítems, Hitos) y EL AVATAR, volviendo a la selección de facción. ¿Reiniciar por completo?'
 		);
 		if (!confirmed) return;
 		resetting = true;
@@ -1449,10 +1575,39 @@
 		}
 	}
 
+	async function handleSoftResetPlayer() {
+		if (!dev || resetting) return;
+		const confirmed = window.confirm(
+			'F9 (Dev): ¿Reiniciar el progreso del jugador (misiones, códigos, XP a 0) CONSERVANDO tu Avatar y Facción?'
+		);
+		if (!confirmed) return;
+		resetting = true;
+		try {
+			const res = await fetch(`/api/event/${data.event.slug}`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action: 'soft_reset' })
+			});
+			const resData = await res.json();
+			if (resData.success) {
+				window.location.reload();
+			}
+		} catch (e) {
+			console.error(e);
+		} finally {
+			resetting = false;
+		}
+	}
+
 	function handleKeyDown(e: KeyboardEvent) {
-		if (dev && e.key === 'F10') {
-			e.preventDefault();
-			handleResetPlayer();
+		if (dev) {
+			if (e.key === 'F9') {
+				e.preventDefault();
+				handleSoftResetPlayer();
+			} else if (e.key === 'F10') {
+				e.preventDefault();
+				handleResetPlayer();
+			}
 		}
 	}
 </script>
@@ -2189,7 +2344,24 @@
 						<button
 							type="button"
 							class="mission-card featured"
-							onclick={() => { activeTab = 'missions'; selectedMission = featuredMission; playModalOpen(); }}
+							onclick={() => {
+								if (featuredMission.completed && featuredMission.type === 'ai_prompt_challenge') {
+									const aiData = getCompletedAiMissionData(featuredMission);
+									if (aiData) {
+										giocchiModalData = {
+											missionTitle: featuredMission.title,
+											userInput: aiData.userInput,
+											feedback: aiData.feedback,
+											xpAwarded: aiData.xpAwarded
+										};
+										playModalOpen();
+										return;
+									}
+								}
+								activeTab = 'missions';
+								selectedMission = featuredMission;
+								playModalOpen();
+							}}
 						>
 							<img
 								src={featuredMission.image || 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=400&auto=format&fit=crop&q=80'}
@@ -2259,7 +2431,25 @@
 							<button
 								type="button"
 								class="mission-card {m.unlocked ? '' : 'locked'} {m.completed ? 'completed' : ''}"
-								onclick={() => { if (m.unlocked) { selectedMission = m; playModalOpen(); } }}
+								onclick={() => {
+									if (m.unlocked) {
+										if (m.completed && m.type === 'ai_prompt_challenge') {
+											const aiData = getCompletedAiMissionData(m);
+											if (aiData) {
+												giocchiModalData = {
+													missionTitle: m.title,
+													userInput: aiData.userInput,
+													feedback: aiData.feedback,
+													xpAwarded: aiData.xpAwarded
+												};
+												playModalOpen();
+												return;
+											}
+										}
+										selectedMission = m;
+										playModalOpen();
+									}
+								}}
 								disabled={!m.unlocked}
 							>
 								<div class="m-header">
@@ -2848,179 +3038,272 @@
 					onclick={(e) => e.stopPropagation()}
 					onkeydown={(e) => e.stopPropagation()}
 				>
-					<span class="m-badge {selectedMission.type}">{selectedMission.type.toUpperCase()}</span>
-					<h3>{selectedMission.title}</h3>
-					<p>{selectedMission.description}</p>
+					{#if selectedMission.type === 'ai_prompt_challenge' && (resolvingMission || requestingQuickFallback)}
+						<!-- ESTADO DE ESPERA EXCLUSIVO DE GIOCCHI AI: Oculta la descripción y textarea para enfocar en la espera -->
+						<div class="ai-processing-focused">
+							<img src="/images/gamescon/characters/char_giocchi.jpg" alt="GIOCCHI AI" class="giocchi-popup-avatar" />
+							<div class="ai-processing-header">
+								<span class="giocchi-popup-badge">INTELIGENCIA TÁCTICA</span>
+								<h3 class="ai-processing-title">GIOCCHI está evaluando tu respuesta...</h3>
+							</div>
 
-					<!-- Cascada de texto por Facción/Avatar (sección 10.4): solo
-					     algunas misiones tienen variantes (mechanic.faction_variants/
-					     avatar_variants, sembradas selectivamente donde aportan — ver
-					     seed_gamescon.sql). Si no aplica para la facción/avatar de este
-					     jugador, no se agrega nada, nunca un placeholder vacío. -->
-					{#if selectedMission.mechanic?.faction_variants?.[player?.avatar?.faction_id]}
-						<p class="mission-context-variant mono"><span class="variant-label">Perspectiva de tu División:</span> {selectedMission.mechanic.faction_variants[player.avatar.faction_id]}</p>
-					{/if}
-					{#if selectedMission.mechanic?.avatar_variants?.[player?.avatar?.avatar_id]}
-						<p class="mission-context-variant mono"><span class="variant-label">Perspectiva de tu Rol:</span> {selectedMission.mechanic.avatar_variants[player.avatar.avatar_id]}</p>
-					{/if}
-
-					{#if selectedMission.completed && selectedMission.type !== 'collective_vote'}
-						<!-- 1.6 del informe UX: antes esto caía en el formulario en blanco de
-						     abajo, y el jugador se enteraba de que ya la había completado
-						     recién AL ENVIAR una respuesta que nunca iba a contar. Las
-						     votaciones quedan afuera a propósito: ahí sí se puede recomponer
-						     el voto y por eso siguen su propio branch más abajo. -->
-						{@const canRetry = selectedMission.type === 'dice_check'
-							&& player.game_status?.dice_check_outcomes?.[selectedMission.id] === false
-							&& player.game_status?.unlocked_rewards?.includes('rew_item_reintento')
-							&& !player.game_status?.reintento_used
-							&& !retryResult}
-						{#if canRetry}
-							<!-- Ficha de Reintento (Fase 4.4, comprada en la Bóveda): la
-							     misión ya está en completed_missions (el XP/CP del primer
-							     intento no se toca), pero el fallo es reintentable una vez. -->
-							<div class="mission-retry-panel">
-								<p class="dc-note">Fallaste este chequeo, pero tenés una Ficha de Reintento sin usar en tu Bóveda.</p>
-								<button type="button" class="primary-btn" onclick={handleRetryDiceCheck} disabled={retryingMission}>
-									{#if retryingMission}Reintentando...{:else}<Dices size={16} /> Reintentar con Ficha de Reintento{/if}
+							<div class="ai-processing-box">
+								<p class="giocchi-thinking mono">{GIOCCHI_THINKING_MESSAGES[giocchiThinkingIndex]}</p>
+								<p class="ai-countdown-text">
+									{#if aiCountdown > 0}
+										Tiempo estimado de respuesta: <strong class="mono">{aiCountdown}s</strong>
+									{:else}
+										Tiempo estimado de respuesta: Puede tomar unos segundos más...
+									{/if}
+								</p>
+								<button
+									type="button"
+									class="quick-fallback-btn"
+									onclick={handleQuickFallback}
+									disabled={requestingQuickFallback}
+								>
+									<Zap size={14} /> <span>{requestingQuickFallback ? 'Obteniendo respuesta...' : 'Respuesta rápida'}</span>
 								</button>
 							</div>
-						{:else if retryResult}
-							{#if retryResult.success}
-								<DiceCheckRoll
-									roll={retryResult.roll}
-									modifier={retryResult.modifier}
-									total={retryResult.total}
-									dc={retryResult.dc}
-									checkSuccess={retryResult.checkSuccess}
-									attribute={retryResult.attribute}
-									onSettle={() => (retryResult.checkSuccess ? playDiceSuccess() : playDiceFail())}
-									onContinue={() => applyDiceCheckConsequences(retryResult, diceRollPreviousItemCount)}
-								/>
+						</div>
+					{:else}
+						<span class="m-badge {selectedMission.type}">{selectedMission.type.toUpperCase()}</span>
+						<h3>{selectedMission.title}</h3>
+						<p>{selectedMission.description}</p>
+
+						<!-- Cascada de texto por Facción/Avatar (sección 10.4): solo
+						     algunas misiones tienen variantes (mechanic.faction_variants/
+						     avatar_variants, sembradas selectivamente donde aportan — ver
+						     seed_gamescon.sql). Si no aplica para la facción/avatar de este
+						     jugador, no se agrega nada, nunca un placeholder vacío. -->
+						{#if selectedMission.mechanic?.faction_variants?.[player?.avatar?.faction_id]}
+							<p class="mission-context-variant mono"><span class="variant-label">Perspectiva de tu División:</span> {selectedMission.mechanic.faction_variants[player.avatar.faction_id]}</p>
+						{/if}
+						{#if selectedMission.mechanic?.avatar_variants?.[player?.avatar?.avatar_id]}
+							<p class="mission-context-variant mono"><span class="variant-label">Perspectiva de tu Rol:</span> {selectedMission.mechanic.avatar_variants[player.avatar.avatar_id]}</p>
+						{/if}
+
+						{#if selectedMission.completed && selectedMission.type !== 'collective_vote' && selectedMission.type !== 'ai_prompt_challenge'}
+							<!-- 1.6 del informe UX: antes esto caía en el formulario en blanco de
+							     abajo, y el jugador se enteraba de que ya la había completado
+							     recién AL ENVIAR una respuesta que nunca iba a contar. Las
+							     votaciones y retos de IA quedan afuera a propósito: votaciones
+							     para recomponer el voto y retos IA para revisar la evaluación de GIOCCHI. -->
+							{@const canRetry = selectedMission.type === 'dice_check'
+								&& player.game_status?.dice_check_outcomes?.[selectedMission.id] === false
+								&& player.game_status?.unlocked_rewards?.includes('rew_item_reintento')
+								&& !player.game_status?.reintento_used
+								&& !retryResult}
+							{#if canRetry}
+								<!-- Ficha de Reintento (Fase 4.4, comprada en la Bóveda): la
+								     misión ya está en completed_missions (el XP/CP del primer
+								     intento no se toca), pero el fallo es reintentable una vez. -->
+								<div class="mission-retry-panel">
+									<p class="dc-note">Fallaste este chequeo, pero tenés una Ficha de Reintento sin usar en tu Bóveda.</p>
+									<button type="button" class="primary-btn" onclick={handleRetryDiceCheck} disabled={retryingMission}>
+										{#if retryingMission}Reintentando...{:else}<Dices size={16} /> Reintentar con Ficha de Reintento{/if}
+									</button>
+								</div>
+							{:else if retryResult}
+								{#if retryResult.success}
+									<DiceCheckRoll
+										roll={retryResult.roll}
+										modifier={retryResult.modifier}
+										total={retryResult.total}
+										dc={retryResult.dc}
+										checkSuccess={retryResult.checkSuccess}
+										attribute={retryResult.attribute}
+										onSettle={() => (retryResult.checkSuccess ? playDiceSuccess() : playDiceFail())}
+										onContinue={() => applyDiceCheckConsequences(retryResult, diceRollPreviousItemCount)}
+									/>
+								{/if}
+								{#if diceRollPhase === 'consequences'}
+									<p class="hint">{retryResult.message}</p>
+								{/if}
+							{:else}
+								<div class="mission-already-done">
+									<span class="mission-done-icon"><Check size={16} /></span>
+									<p>Ya completaste esta misión — no hace falta volver a resolverla.</p>
+								</div>
 							{/if}
-							{#if diceRollPhase === 'consequences'}
-								<p class="hint">{retryResult.message}</p>
-							{/if}
-						{:else}
+						{:else if selectedMission.type === 'time_bomb' && selectedMission.expired}
+							<!-- El tiempo real (server-side, ver checkExpiredTimeBombs) expiró
+							     sin completar — ya no se puede canjear el código y la Inercia
+							     Global ya subió +2 en el servidor. -->
 							<div class="mission-already-done">
-								<span class="mission-done-icon"><Check size={16} /></span>
-								<p>Ya completaste esta misión — no hace falta volver a resolverla.</p>
+								<span class="mission-done-icon"><Lock size={16} /></span>
+								<p>El tiempo para desactivar esta misión se agotó. La Agencia ya registró la falla.</p>
+							</div>
+						{:else if selectedMission.type === 'code' || selectedMission.type === 'time_bomb'}
+							<form onsubmit={(e) => { e.preventDefault(); handleCodeSubmit(); }} class="modal-form">
+								<input
+									type="text"
+									bind:value={codeInput}
+									placeholder="Introduce la clave..."
+									class="code-input"
+									disabled={submittingCode}
+								/>
+								<button type="submit" class="primary-btn" disabled={submittingCode}>
+									{#if submittingCode}
+										<svg class="spinner" viewBox="0 0 24 24" fill="none">
+											<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+											<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+										</svg>
+										<span>Verificando...</span>
+									{:else}
+										<span>Enviar Solución</span>
+									{/if}
+								</button>
+							</form>
+						{:else if selectedMission.type === 'collective_vote'}
+							<div class="vote-options">
+								{#each selectedMission.options as opt}
+									<button
+										class="vote-btn {votedOption === opt.id ? 'active' : ''}"
+										onclick={() => handleVote(opt.id)}
+										disabled={voting}
+									>
+										{opt.text} {votedOption === opt.id ? '✓' : ''}
+									</button>
+								{/each}
+							</div>
+						{:else if selectedMission.type === 'dice_check'}
+							<div class="mechanic-panel">
+								{#if !missionResult}
+									<p class="dc-note">DC actual: <strong class="mono">{diceCheckDc}</strong> — sube con tus propias misiones resueltas, no es arbitrario.</p>
+									<p class="mechanic-hint">
+										Atributo en juego: <SkillBadge skillKey={diceCheckAttribute} value={diceCheckSp} />
+										→ modificador <strong class="mono">+{diceCheckModifier}</strong>
+										<br />Tirada: d20 + modificador, contra el DC de arriba.
+									</p>
+									<button class="primary-btn" onclick={() => handleResolveMission({})} disabled={resolvingMission}>
+										{#if resolvingMission}Tirando...{:else}<Dices size={16} /> Hacer chequeo{/if}
+									</button>
+								{:else if missionResult.success}
+									<DiceCheckRoll
+										roll={missionResult.roll}
+										modifier={missionResult.modifier}
+										total={missionResult.total}
+										dc={missionResult.dc}
+										checkSuccess={missionResult.checkSuccess}
+										attribute={missionResult.attribute}
+										onSettle={() => (missionResult.checkSuccess ? playDiceSuccess() : playDiceFail())}
+										onContinue={() => applyDiceCheckConsequences(missionResult, diceRollPreviousItemCount)}
+									/>
+								{/if}
+							</div>
+						{:else if selectedMission.type === 'trivia_quiz'}
+							<div class="vote-options">
+								{#each (selectedMission.mechanic?.options || []) as opt}
+									<button
+										class="vote-btn {missionResult?.correctOptionId === opt.id ? 'active' : ''}"
+										onclick={() => handleResolveMission({ optionId: opt.id })}
+										disabled={resolvingMission || !!missionResult}
+									>
+										{opt.text} {missionResult?.correctOptionId === opt.id ? '✓' : ''}
+									</button>
+								{/each}
+							</div>
+						{:else if selectedMission.type === 'ai_prompt_challenge'}
+							<form
+								class="modal-form"
+								onsubmit={(e) => { e.preventDefault(); handleResolveMission({ answerText: aiPromptText }); }}
+							>
+								<textarea
+									class="code-input ai-textarea"
+									bind:value={aiPromptText}
+									rows="4"
+									maxlength="300"
+									placeholder="Escribe tu argumento (entre 20 y 300 caracteres)..."
+									disabled={resolvingMission || !!missionResult}
+								></textarea>
+								<small class="char-counter">{aiPromptText.trim().length} / 300</small>
+								<button
+									type="submit"
+									class="primary-btn"
+									disabled={resolvingMission || !!missionResult || aiPromptText.trim().length < 20}
+								>
+									Enviar a GIOCCHI
+								</button>
+							</form>
+						{/if}
+
+						{#if codeMessage}
+							<div class="code-feedback {codeMessage.type}">{codeMessage.text}</div>
+						{/if}
+
+						{#if missionResult && selectedMission.type !== 'ai_prompt_challenge' && (selectedMission.type !== 'dice_check' || diceRollPhase === 'consequences')}
+							<div class="code-feedback {missionResult.success ? 'success' : 'error'}">{missionResult.message}</div>
+						{:else if missionResult && !missionResult.success}
+							<div class="code-feedback error">{missionResult.message}</div>
+						{/if}
+
+						<button class="secondary-btn modal-close" onclick={() => (selectedMission = null)}>Cerrar</button>
+					{/if}
+				</div>
+			</div>
+		{/if}
+
+		<!-- MODAL DEDICADO DE EVALUACIÓN GIOCCHI AI (RETOS AI_PROMPT) -->
+		{#if giocchiModalData}
+			<div
+				class="modal-overlay giocchi-overlay"
+				role="button"
+				tabindex="0"
+				onclick={() => (giocchiModalData = null)}
+				onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') giocchiModalData = null; }}
+			>
+				<div
+					class="modal-card giocchi-popup-card"
+					role="dialog"
+					aria-modal="true"
+					tabindex="-1"
+					onclick={(e) => e.stopPropagation()}
+					onkeydown={(e) => e.stopPropagation()}
+				>
+					<div class="giocchi-popup-header">
+						<img src="/images/gamescon/characters/char_giocchi.jpg" alt="GIOCCHI AI" class="giocchi-popup-avatar" />
+						<div class="giocchi-popup-header-info">
+							<span class="giocchi-popup-badge">EVALUACIÓN DE INTELIGENCIA TÁCTICA</span>
+							<strong class="giocchi-popup-title">GIOCCHI AI</strong>
+							<span class="giocchi-popup-mission">{giocchiModalData.missionTitle}</span>
+						</div>
+						{#if giocchiModalData.xpAwarded}
+							<div class="giocchi-popup-xp">+{giocchiModalData.xpAwarded} XP</div>
+						{/if}
+					</div>
+
+					<div class="giocchi-popup-scrollable-body">
+						{#if giocchiModalData.userInput}
+							<div class="giocchi-popup-quote">
+								<span class="quote-label">Tu argumento:</span>
+								<p class="quote-text">"{giocchiModalData.userInput}"</p>
 							</div>
 						{/if}
-					{:else if selectedMission.type === 'time_bomb' && selectedMission.expired}
-						<!-- El tiempo real (server-side, ver checkExpiredTimeBombs) expiró
-						     sin completar — ya no se puede canjear el código y la Inercia
-						     Global ya subió +2 en el servidor. -->
-						<div class="mission-already-done">
-							<span class="mission-done-icon"><Lock size={16} /></span>
-							<p>El tiempo para desactivar esta misión se agotó. La Agencia ya registró la falla.</p>
-						</div>
-					{:else if selectedMission.type === 'code' || selectedMission.type === 'time_bomb'}
-						<form onsubmit={(e) => { e.preventDefault(); handleCodeSubmit(); }} class="modal-form">
-							<input
-								type="text"
-								bind:value={codeInput}
-								placeholder="Introduce la clave..."
-								class="code-input"
-								disabled={submittingCode}
-							/>
-							<button type="submit" class="primary-btn" disabled={submittingCode}>
-								{#if submittingCode}
-									<svg class="spinner" viewBox="0 0 24 24" fill="none">
-										<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-										<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-									</svg>
-									<span>Verificando...</span>
-								{:else}
-									<span>Enviar Solución</span>
-								{/if}
-							</button>
-						</form>
-					{:else if selectedMission.type === 'collective_vote'}
-						<div class="vote-options">
-							{#each selectedMission.options as opt}
-								<button
-									class="vote-btn {votedOption === opt.id ? 'active' : ''}"
-									onclick={() => handleVote(opt.id)}
-									disabled={voting}
-								>
-									{opt.text} {votedOption === opt.id ? '✓' : ''}
-								</button>
-							{/each}
-						</div>
-					{:else if selectedMission.type === 'dice_check'}
-						<div class="mechanic-panel">
-							{#if !missionResult}
-								<p class="dc-note">DC actual: <strong class="mono">{diceCheckDc}</strong> — sube con tus propias misiones resueltas, no es arbitrario.</p>
-								<p class="mechanic-hint">
-									Atributo en juego: <SkillBadge skillKey={diceCheckAttribute} value={diceCheckSp} />
-									→ modificador <strong class="mono">+{diceCheckModifier}</strong>
-									<br />Tirada: d20 + modificador, contra el DC de arriba.
-								</p>
-								<button class="primary-btn" onclick={() => handleResolveMission({})} disabled={resolvingMission}>
-									{#if resolvingMission}Tirando...{:else}<Dices size={16} /> Hacer chequeo{/if}
-								</button>
-							{:else if missionResult.success}
-								<DiceCheckRoll
-									roll={missionResult.roll}
-									modifier={missionResult.modifier}
-									total={missionResult.total}
-									dc={missionResult.dc}
-									checkSuccess={missionResult.checkSuccess}
-									attribute={missionResult.attribute}
-									onSettle={() => (missionResult.checkSuccess ? playDiceSuccess() : playDiceFail())}
-									onContinue={() => applyDiceCheckConsequences(missionResult, diceRollPreviousItemCount)}
-								/>
-							{/if}
-						</div>
-					{:else if selectedMission.type === 'trivia_quiz'}
-						<div class="vote-options">
-							{#each (selectedMission.mechanic?.options || []) as opt}
-								<button
-									class="vote-btn {missionResult?.correctOptionId === opt.id ? 'active' : ''}"
-									onclick={() => handleResolveMission({ optionId: opt.id })}
-									disabled={resolvingMission || !!missionResult}
-								>
-									{opt.text} {missionResult?.correctOptionId === opt.id ? '✓' : ''}
-								</button>
-							{/each}
-						</div>
-					{:else if selectedMission.type === 'ai_prompt_challenge'}
-						<form
-							class="modal-form"
-							onsubmit={(e) => { e.preventDefault(); handleResolveMission({ answerText: aiPromptText }); }}
-						>
-							<textarea
-								class="code-input ai-textarea"
-								bind:value={aiPromptText}
-								rows="4"
-								maxlength="300"
-								placeholder="Escribe tu argumento (entre 20 y 300 caracteres)..."
-								disabled={resolvingMission || !!missionResult}
-							></textarea>
-							<small class="char-counter">{aiPromptText.trim().length} / 300</small>
-							<button
-								type="submit"
-								class="primary-btn"
-								disabled={resolvingMission || !!missionResult || aiPromptText.trim().length < 20}
-							>
-								{resolvingMission ? 'Enviando a GIOCCHI...' : 'Enviar a GIOCCHI'}
-							</button>
-							{#if resolvingMission}
-								<p class="giocchi-thinking mono">{GIOCCHI_THINKING_MESSAGES[giocchiThinkingIndex]}</p>
-							{/if}
-						</form>
-					{/if}
 
-					{#if codeMessage}
-						<div class="code-feedback {codeMessage.type}">{codeMessage.text}</div>
-					{/if}
+						<div class="giocchi-popup-analysis">
+							<span class="analysis-label">Análisis de GIOCCHI & Principio BEM:</span>
+							<div class="giocchi-popup-paragraphs">
+								{#each (giocchiModalData.feedback || '').split('\n\n') as para}
+									{#if para.trim()}
+										<p>{para.trim()}</p>
+									{/if}
+								{/each}
+							</div>
+						</div>
 
-					{#if missionResult && (selectedMission.type !== 'dice_check' || diceRollPhase === 'consequences')}
-						<div class="code-feedback {missionResult.success ? 'success' : 'error'}">{missionResult.message}</div>
-					{/if}
+						<div class="giocchi-popup-footer-notice">
+							<span>✓ Entrada archivada permanentemente en tu Bitácora (Pestaña Perfil)</span>
+						</div>
+					</div>
 
-					<button class="secondary-btn modal-close" onclick={() => (selectedMission = null)}>Cerrar</button>
+					<button
+						type="button"
+						class="primary-btn giocchi-popup-close-btn"
+						onclick={() => (giocchiModalData = null)}
+					>
+						<span>Entendido / Continuar ➔</span>
+					</button>
 				</div>
 			</div>
 		{/if}
@@ -4400,7 +4683,10 @@
 		border-radius: var(--radius-lg);
 		padding: 1.5rem;
 		width: 100%;
-		max-width: 420px;
+		max-width: 440px;
+		max-height: 88vh;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
 		box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
 		display: flex;
 		flex-direction: column;
@@ -4730,15 +5016,236 @@
 	   #94a3b8 (el gris ya usado en el resto de la app) mide 6.5-7.6:1. */
 	.char-counter { align-self: flex-end; font-size: var(--text-sm); color: #94a3b8; }
 	.giocchi-thinking {
-		margin: 0.4rem 0 0;
+		margin: 0;
 		font-size: var(--text-sm);
 		color: #a78bfa;
 		text-align: center;
 		animation: giocchi-pulse 1.8s ease-in-out infinite;
 	}
+	.ai-processing-focused {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 1.25rem;
+		padding: 1.25rem 0.5rem;
+		width: 100%;
+	}
+	.ai-processing-header {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.35rem;
+	}
+	.ai-processing-title {
+		margin: 0;
+		font-size: 1.15rem;
+		color: #ffffff;
+		font-weight: 700;
+		text-align: center;
+	}
+	.ai-processing-box {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.65rem;
+		width: 100%;
+		padding: 0.85rem;
+		background: rgba(167, 139, 250, 0.08);
+		border: 1px dashed rgba(167, 139, 250, 0.3);
+		border-radius: 0.75rem;
+	}
+	.ai-countdown-text {
+		margin: 0;
+		font-size: 0.82rem;
+		color: #cbd5e1;
+		text-align: center;
+	}
+	.ai-countdown-text strong {
+		color: #38bdf8;
+	}
+	.quick-fallback-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		padding: 0.45rem 1.1rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		color: #fbbf24;
+		background: rgba(251, 191, 36, 0.12);
+		border: 1px solid rgba(251, 191, 36, 0.4);
+		border-radius: 9999px;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+	.quick-fallback-btn:hover:not(:disabled) {
+		background: rgba(251, 191, 36, 0.22);
+		border-color: #fbbf24;
+		transform: translateY(-1px);
+	}
+	.quick-fallback-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 	@keyframes giocchi-pulse {
 		0%, 100% { opacity: 0.55; }
 		50% { opacity: 1; }
+	}
+
+	/* MODAL DEDICADO DE RESPUESTA GIOCCHI AI */
+	.giocchi-overlay {
+		z-index: 300;
+		background: rgba(5, 7, 15, 0.85);
+		backdrop-filter: blur(10px);
+	}
+	.giocchi-popup-card {
+		background: linear-gradient(145deg, #161233 0%, #0c1020 100%);
+		border: 1px solid rgba(192, 132, 252, 0.45);
+		max-width: 460px;
+		max-height: 85vh;
+		display: flex;
+		flex-direction: column;
+		padding: 1.5rem;
+		gap: 1.2rem;
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(168, 85, 247, 0.2);
+	}
+	.giocchi-popup-header {
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		padding-bottom: 0.85rem;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+		flex-shrink: 0;
+	}
+	.giocchi-popup-avatar {
+		width: 50px;
+		height: 50px;
+		border-radius: 50%;
+		border: 2px solid #c084fc;
+		object-fit: cover;
+		box-shadow: 0 0 14px rgba(192, 132, 252, 0.45);
+		flex-shrink: 0;
+	}
+	.giocchi-popup-header-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		flex: 1;
+		text-align: left;
+		min-width: 0;
+	}
+	.giocchi-popup-badge {
+		font-size: 0.65rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		color: #c084fc;
+		text-transform: uppercase;
+	}
+	.giocchi-popup-title {
+		font-size: 1.15rem;
+		color: #ffffff;
+		font-weight: 800;
+		letter-spacing: -0.01em;
+		margin: 0;
+	}
+	.giocchi-popup-mission {
+		font-size: 0.75rem;
+		color: #94a3b8;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.giocchi-popup-xp {
+		background: rgba(168, 85, 247, 0.25);
+		color: #e9d5ff;
+		font-size: 0.9rem;
+		font-weight: 800;
+		padding: 0.35rem 0.8rem;
+		border-radius: 9999px;
+		border: 1px solid rgba(192, 132, 252, 0.45);
+		flex-shrink: 0;
+	}
+	.giocchi-popup-scrollable-body {
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+		padding-right: 0.3rem;
+		max-height: 52vh;
+	}
+	.giocchi-popup-quote {
+		background: rgba(0, 0, 0, 0.4);
+		border-left: 3px solid #38bdf8;
+		border-radius: 0 0.5rem 0.5rem 0;
+		padding: 0.85rem 1rem;
+		text-align: left;
+	}
+	.giocchi-popup-quote .quote-label {
+		display: block;
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: #38bdf8;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin-bottom: 0.25rem;
+	}
+	.giocchi-popup-quote .quote-text {
+		margin: 0;
+		font-size: 0.88rem;
+		font-style: italic;
+		color: #cbd5e1;
+		line-height: 1.45;
+	}
+	.giocchi-popup-analysis {
+		text-align: left;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+	.giocchi-popup-analysis .analysis-label {
+		font-size: 0.76rem;
+		font-weight: 800;
+		color: #fbbf24;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+	.giocchi-popup-paragraphs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.85rem;
+		line-height: 1.6;
+		font-size: 0.94rem;
+		color: #f1f5f9;
+	}
+	.giocchi-popup-paragraphs p {
+		margin: 0;
+	}
+	.giocchi-popup-footer-notice {
+		padding-top: 0.75rem;
+		border-top: 1px solid rgba(255, 255, 255, 0.08);
+		font-size: 0.76rem;
+		color: #a78bfa;
+		text-align: left;
+	}
+	.giocchi-popup-close-btn {
+		width: 100%;
+		padding: 0.85rem;
+		font-size: 1rem;
+		font-weight: 700;
+		background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: var(--radius-md);
+		color: #ffffff;
+		cursor: pointer;
+		flex-shrink: 0;
+		box-shadow: 0 4px 14px rgba(124, 58, 237, 0.4);
+		transition: transform 0.15s ease, filter 0.15s ease;
+	}
+	.giocchi-popup-close-btn:hover {
+		filter: brightness(1.1);
+		transform: translateY(-1px);
 	}
 
 	/* BOTTOM NAVIGATION BAR */

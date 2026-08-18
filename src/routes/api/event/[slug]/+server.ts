@@ -11,6 +11,7 @@ import {
 	markNarrativeSeen,
 	updatePlayerSoundSetting,
 	resetPlayerAvatar,
+	softResetPlayerProgress,
 	getFactionMembers,
 	getWorldState,
 	purchaseReward,
@@ -54,6 +55,17 @@ export const POST: RequestHandler = async ({ params, request, cookies }) => {
 			return json({ success: true, message: 'Jugador reseteado con éxito' });
 		}
 
+		if (action === 'soft_reset') {
+			if (!dev) {
+				return json({ error: 'Acción no válida' }, { status: 400 });
+			}
+			const result = await softResetPlayerProgress(user.id, event.id);
+			console.warn(
+				`[audit] Soft reset de progreso (F9) ejecutado (dev) — user=${user.id} event=${event.id} slug=${params.slug} at=${new Date().toISOString()}`
+			);
+			return json({ success: true, message: 'Progreso reseteado con éxito (conservando avatar y facción)', ...result });
+		}
+
 		if (action === 'join') {
 			const { avatarId, factionId, gender } = body;
 			if (!avatarId || !factionId) {
@@ -88,9 +100,9 @@ export const POST: RequestHandler = async ({ params, request, cookies }) => {
 		}
 
 		if (action === 'resolve_mission') {
-			const { missionId, optionId, answerText } = body;
+			const { missionId, optionId, answerText, skipAi } = body;
 			if (!missionId) return json({ error: 'missionId requerido' }, { status: 400 });
-			const result = await resolveMissionForPlayer(user.id, event.id, missionId, { optionId, answerText });
+			const result = await resolveMissionForPlayer(user.id, event.id, missionId, { optionId, answerText, skipAi });
 			return json(result);
 		}
 

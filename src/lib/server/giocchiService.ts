@@ -63,7 +63,7 @@ export async function evaluateAiPromptChallenge(params: {
 	// no un bug — el fallback nunca rompe el juego, solo pierde la
 	// personalización. El frontend muestra mensajes progresivos mientras
 	// espera para que la demora no se sienta como que algo se colgó.
-	const GEMINI_BUDGET_MS = 15000;
+	const GEMINI_BUDGET_MS = 35000;
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 
 	try {
@@ -162,15 +162,20 @@ Analiza la respuesta del participante dentro de <user_response>, valida su perti
 		const configuredModel = env.GEMINI_MODEL || 'gemini-3.7-flash';
 		const candidateModels = [configuredModel, 'gemini-3.6-flash'].filter((v, i, a) => a.indexOf(v) === i);
 
-		// Reloj propio de Gemini, arrancado recién ahora — lo que haya tardado el
-		// contexto MCP de arriba no le resta ni un milisegundo a este presupuesto.
-		const controller = new AbortController();
-		timeout = setTimeout(() => controller.abort(), GEMINI_BUDGET_MS);
-
 		let jsonResult: any = null;
 
 		for (const model of candidateModels) {
-			if (controller.signal.aborted) break;
+			const controller = new AbortController();
+			const modelTimeout = setTimeout(() => controller.abort(), 55000);
+
+			const generationConfig: Record<string, any> = {
+				responseMimeType: 'application/json',
+				temperature: 0.7,
+				maxOutputTokens: 4096
+			};
+			if (model.includes('3.7')) {
+				generationConfig.thinkingConfig = { thinkingBudget: 0 };
+			}
 
 			try {
 				const response = await fetch(
@@ -188,50 +193,43 @@ Analiza la respuesta del participante dentro de <user_response>, valida su perti
 									parts: [{ text: userPrompt }]
 								}
 							],
-							generationConfig: {
-								responseMimeType: 'application/json',
-								temperature: 0.7,
-								// 1200, no 600: en pruebas reales, gemini-3.7-flash es un
-								// modelo con "thinking" — puede gastar el budget entero en
-								// tokens de razonamiento interno y devolver contenido vacío
-								// (finishReason MAX_TOKENS, 0 texto visible) antes de llegar
-								// a escribir el JSON de salida. Más margen reduce ese riesgo;
-								// no hay forma de desactivar el thinking sin confirmar con
-								// Javier si este modelo soporta thinkingConfig.
-								maxOutputTokens: 1200
-							}
+							generationConfig
 						}),
 						signal: controller.signal
 					}
 				);
+				clearTimeout(modelTimeout);
 
 				if (!response.ok) {
 					const errBody = await response.text().catch(() => '');
 					console.warn(`[GIOCCHI] Modelo ${model} respondió con error ${response.status}: ${errBody.slice(0, 150)}`);
-					continue; // Intenta con el siguiente modelo candidato
+					continue; // Intenta con el siguiente modelo candidato (ej. gemini-3.6-flash si 3.7 da 503)
 				}
 
 				const data = await response.json();
 				const rawContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
 				if (rawContent) {
 					jsonResult = JSON.parse(rawContent);
+					console.log(`[GIOCCHI] Éxito evaluando reto con modelo: ${model}`);
 					break;
 				}
 			} catch (fetchErr: any) {
+				clearTimeout(modelTimeout);
 				console.warn(`[GIOCCHI] Fallo al invocar ${model}:`, fetchErr?.message || fetchErr);
 			}
 		}
 
-		if (!jsonResult || typeof jsonResult.feedback_text !== 'string') {
+		const feedbackText = jsonResult?.feedback_text || jsonResult?.feedback || jsonResult?.analysis || '';
+		if (!jsonResult || typeof feedbackText !== 'string' || !feedbackText.trim()) {
 			throw new Error('Respuesta inválida o nula del modelo de IA');
 		}
 
 		// 4. Clamping estricto de XP entre 10 y 40 según diseño
-		const parsedXp = Number(jsonResult.xp_awarded);
+		const parsedXp = Number(jsonResult.xp_awarded ?? jsonResult.xpAwarded ?? jsonResult.score_xp);
 		const clampedXp = Math.max(10, Math.min(40, Math.round(Number.isFinite(parsedXp) ? parsedXp : 25)));
 
 		return {
-			feedback_text: jsonResult.feedback_text.trim(),
+			feedback_text: feedbackText.trim(),
 			xp_awarded: clampedXp,
 			isFallback: false,
 			source_notes: sourceNotes
