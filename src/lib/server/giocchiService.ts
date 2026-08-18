@@ -158,9 +158,11 @@ ${userInput}
 
 Analiza la respuesta del participante dentro de <user_response>, valida su pertinencia contra la teoría BEM y genera el feedback y el puntaje de XP en JSON.`;
 
-		// 3. Selección de modelos (primario gemini-3.7-flash, con fallback a gemini-3.6-flash)
-		const configuredModel = env.GEMINI_MODEL || 'gemini-3.7-flash';
-		const candidateModels = [configuredModel, 'gemini-3.6-flash'].filter((v, i, a) => a.indexOf(v) === i);
+		// 3. Selección de modelos (primario gemini-2.0-flash, con fallbacks robustos)
+		const configuredModel = env.GEMINI_MODEL || 'gemini-2.0-flash';
+		const candidateModels = [configuredModel, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'].filter(
+			(v, i, a) => Boolean(v) && a.indexOf(v) === i
+		);
 
 		// Reloj propio de Gemini, arrancado recién ahora — lo que haya tardado el
 		// contexto MCP de arriba no le resta ni un milisegundo a este presupuesto.
