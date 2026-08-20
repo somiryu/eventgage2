@@ -25,25 +25,48 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 		if (authData?.user) {
 			userId = authData.user.id;
 			fullName = authData.user.user_metadata?.full_name || 'Agente';
-
-			// Registrar/Asegurar el perfil explícito en bem.eventgage_user al ingresar a Eventgage
-			await supabaseServer
-				.from('eventgage_user')
-				.upsert(
-					{
-						id: userId,
-						email: cleanEmail,
-						full_name: fullName,
-						created_at: new Date().toISOString()
-					},
-					{ onConflict: 'id' }
-				);
 		} else {
-			if (authError?.message?.includes('Invalid login credentials')) {
-				return json({ error: 'La Agencia no reconoce esa combinación de correo y clave. Verifica tus datos, Agente.' }, { status: 400 });
+			// Auto-resolución si el email no estaba confirmado en Supabase Auth
+			if (authError?.message?.toLowerCase().includes('email not confirmed')) {
+				try {
+					const { data: userList } = await supabaseServer.auth.admin.listUsers();
+					const existingUser = userList?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+					if (existingUser) {
+						await supabaseServer.auth.admin.updateUserById(existingUser.id, { email_confirm: true });
+						const { data: retryAuth } = await supabaseAuth.auth.signInWithPassword({
+							email: cleanEmail,
+							password: password
+						});
+						if (retryAuth?.user) {
+							userId = retryAuth.user.id;
+							fullName = retryAuth.user.user_metadata?.full_name || 'Agente';
+						}
+					}
+				} catch (confErr) {
+					console.warn('Auto-confirm retry error:', confErr);
+				}
 			}
-			return json({ error: authError?.message ? `La Agencia reporta: ${authError.message}` : 'La Agencia no pudo verificar tu credencial en este intento. Vuelve a intentarlo.' }, { status: 400 });
+
+			if (!userId) {
+				if (authError?.message?.includes('Invalid login credentials')) {
+					return json({ error: 'La Agencia no reconoce esa combinación de correo y clave. Verifica tus datos, Agente.' }, { status: 400 });
+				}
+				return json({ error: authError?.message ? `La Agencia reporta: ${authError.message}` : 'La Agencia no pudo verificar tu credencial en este intento. Vuelve a intentarlo.' }, { status: 400 });
+			}
 		}
+
+		// Registrar/Asegurar el perfil explícito en bem.eventgage_user al ingresar a Eventgage
+		await supabaseServer
+			.from('eventgage_user')
+			.upsert(
+				{
+					id: userId,
+					email: cleanEmail,
+					full_name: fullName,
+					created_at: new Date().toISOString()
+				},
+				{ onConflict: 'id' }
+			);
 
 		const userObj = {
 			id: userId,

@@ -54,6 +54,16 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 			if (adminError) {
 				console.warn('[register] admin.createUser error:', adminError.message);
 				if (adminError.message.toLowerCase().includes('already registered') || adminError.message.toLowerCase().includes('already exists')) {
+					// Garantizar que la cuenta existente quede confirmada en Supabase Auth
+					try {
+						const { data: userList } = await supabaseServer.auth.admin.listUsers();
+						const existing = userList?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+						if (existing && !existing.email_confirmed_at) {
+							await supabaseServer.auth.admin.updateUserById(existing.id, { email_confirm: true });
+						}
+					} catch (e) {
+						console.warn('Error auto-confirming user in register:', e);
+					}
 					return json({ error: 'Ya existe una credencial de Agente con ese correo. Si es tuya, usa "Iniciar Sesión".' }, { status: 400 });
 				}
 				if (!dev) {
