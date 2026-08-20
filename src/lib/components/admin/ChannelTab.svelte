@@ -639,7 +639,7 @@
 		padding: 0.6rem 0.8rem;
 		border-radius: var(--radius-md, 8px);
 		font-family: inherit;
-		font-size: var(--text-sm, 0.875rem);
+		font-size: 16px;
 	}
 	.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
 		outline: none;

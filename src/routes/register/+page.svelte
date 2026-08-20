@@ -213,7 +213,7 @@
 		border: 1px solid rgba(255, 255, 255, 0.15);
 		border-radius: 0.65rem;
 		color: #ffffff;
-		font-size: 0.95rem;
+		font-size: 16px;
 		transition: all 0.2s ease;
 	}
 

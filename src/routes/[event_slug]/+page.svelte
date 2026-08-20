@@ -4220,7 +4220,7 @@
 		padding: 0.6rem 0.85rem;
 		color: #fff;
 		font-family: var(--font-mono);
-		font-size: var(--text-md);
+		font-size: 16px;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
@@ -5683,7 +5683,7 @@
 	.dice-result { padding: 0.75rem; border-radius: var(--radius-sm); font-size: var(--text-md); text-align: center; }
 	.dice-result.success { background: rgba(16, 185, 129, 0.18); border: 1px solid #10b981; color: #34d399; }
 	.dice-result.fail { background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(255, 255, 255, 0.15); color: #cbd5e1; }
-	.ai-textarea { text-transform: none; resize: vertical; min-height: 5.5rem; font-family: inherit; line-height: 1.4; }
+	.ai-textarea { text-transform: none; resize: vertical; min-height: 5.5rem; font-family: inherit; font-size: 16px; line-height: 1.4; }
 	/* #64748b medía 3.5-4.1:1 contra los fondos reales de la app — no llegaba
 	   al 4.5:1 de WCAG AA que exige la sección 12.3 del diseño (3.13 del
 	   informe UX, medido con la fórmula de contraste real, no a ojo).

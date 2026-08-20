@@ -13,3 +13,19 @@
 
 {@render children()}
 
+<style>
+	:global(input),
+	:global(textarea),
+	:global(select) {
+		font-size: 16px !important;
+	}
+	@media (max-width: 768px) {
+		:global(input),
+		:global(textarea),
+		:global(select) {
+			font-size: 16px !important;
+			touch-action: manipulation;
+		}
+	}
+</style>
+
