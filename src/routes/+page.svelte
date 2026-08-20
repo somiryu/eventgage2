@@ -9,10 +9,10 @@
 		<p class="tagline">Módulos de Gamificación, Alternate Reality Game (ARG) y Misiones en Tiempo Real para Eventos.</p>
 		
 		<div class="demo-box">
-			<h3>Evento de Prueba Disponible</h3>
-			<p>Explora el prototipo interactivo con la demostración de <strong>CyberCon 2026 Demo</strong>.</p>
-			<button class="launch-btn" onclick={() => goto('/demo')}>
-				Ingresar a /demo
+			<h3>Evento Activo</h3>
+			<p>Ingresa a la experiencia oficial de <strong>Gamescon — Agencia Antropológica Huizinga</strong>.</p>
+			<button class="launch-btn" onclick={() => goto('/gamescon')}>
+				Ingresar a /gamescon
 			</button>
 		</div>
 	</div>

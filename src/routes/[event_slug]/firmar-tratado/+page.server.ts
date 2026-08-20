@@ -14,7 +14,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	const user = parseSignedSession<{ id: string; email: string; full_name: string }>(sessionCookie);
 
 	if (!user) {
-		throw redirect(303, `/login?event=${params.event_slug}`);
+		throw redirect(303, `/register?event=${params.event_slug}&redirect=/${params.event_slug}/firmar-tratado`);
 	}
 
 	try {

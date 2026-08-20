@@ -1616,7 +1616,7 @@
 
 	async function handleLogout() {
 		await fetch('/api/auth/logout', { method: 'POST' });
-		goto(`/register?event=${data.event.slug}`);
+		goto(`/register?event=${data.event.slug}&redirect=/${data.event.slug}`);
 	}
 
 	let resetting = $state(false);

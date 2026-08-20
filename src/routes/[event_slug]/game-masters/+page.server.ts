@@ -22,7 +22,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	// esta URL. Cuando haga falta separar jugadores de GMs de verdad, esto
 	// necesita un rol/flag de administrador propio en eventgage_user.
 	if (!user) {
-		throw redirect(303, `/login?event=${params.event_slug}`);
+		throw redirect(303, `/login?event=${params.event_slug}&redirect=/${params.event_slug}/game-masters`);
 	}
 
 	const event = await getEventBySlug(params.event_slug);

@@ -26,7 +26,12 @@
 		return Object.keys(errors).length === 0;
 	}
 
-	const targetEvent = $derived(page.url.searchParams.get('event') || 'demo');
+	const redirectUrl = $derived(page.url.searchParams.get('redirect') || '');
+	const targetEvent = $derived(
+		page.url.searchParams.get('event') ||
+		(redirectUrl.startsWith('/') ? redirectUrl.slice(1).split('/')[0] : '') ||
+		'gamescon'
+	);
 
 	async function handleRegister(e: Event) {
 		e.preventDefault();
@@ -47,7 +52,11 @@
 				errorMessage = data.error || 'La Agencia no pudo abrir tu expediente en este intento.';
 				loading = false;
 			} else {
-				await goto(`/${targetEvent}`);
+				if (redirectUrl && redirectUrl.startsWith('/')) {
+					await goto(redirectUrl);
+				} else {
+					await goto(`/${targetEvent}`);
+				}
 			}
 		} catch (err: any) {
 			errorMessage = 'La Agencia perdió la señal — revisa tu conexión y reintenta.';
@@ -101,7 +110,7 @@
 		</form>
 
 		<div class="auth-footer">
-			¿Ya tienes cuenta? <a href={`/login?event=${targetEvent}`}>Iniciar Sesión</a>
+			¿Ya tienes cuenta? <a href={`/login?event=${targetEvent}${redirectUrl ? `&redirect=${encodeURIComponent(redirectUrl)}` : ''}`}>Iniciar Sesión</a>
 		</div>
 	</div>
 </div>
