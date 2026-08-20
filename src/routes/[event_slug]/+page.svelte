@@ -44,6 +44,7 @@
 	import MapPin from '@lucide/svelte/icons/map-pin';
 	import Users from '@lucide/svelte/icons/users';
 	import Check from '@lucide/svelte/icons/check';
+	import X from '@lucide/svelte/icons/x';
 	import SkillBadge from '$lib/components/SkillBadge.svelte';
 	import VaultModal from '$lib/components/VaultModal.svelte';
 	import { subscribeToEventActivity } from '$lib/client/supabaseClient';
@@ -1111,16 +1112,70 @@
 		lastCipherMessage = msg;
 	});
 
-	// Lista de Comunicaciones Activas para el Canal de Comunicaciones:
-	// Muestra por separado las transmisiones de historia (eventgage_event_dialogues)
-	// y la directiva táctica de progreso de misiones (Operador Cipher).
+	// Biografías y roles oficiales de los personajes de Gamescon para el modal informativo:
+	const CHARACTER_BIOS: Record<string, { role: string; bio: string }> = {
+		char_cipher: {
+			role: 'Soporte Táctico y Telecomunicaciones de la Red',
+			bio: 'Enlace principal de campo en EQUAA. Administra las frecuencias seguras, la telemetría de las terminales y guía a los agentes en la decodificación de pistas físicas y enlace con los Game Masters.'
+		},
+		char_huizinga: {
+			role: 'Directora de la Agencia Antropológica Huizinga',
+			bio: 'Líder visionaria de la Agencia. Especialista en la teoría del Círculo Mágico y el diseño de entornos seguros de aprendizaje donde el error es un checkpoint de maestría (Fail Smart).'
+		},
+		char_siobhan: {
+			role: 'Antropóloga Conductual Senior & Jefa de Modelado BEM',
+			bio: 'Pionera en la arquitectura de incentivos formativos y bucles de retroalimentación inmediata (Loop GFR). Diseña sistemas para potenciar la motivación intrínseca y evitar la fatiga cognitiva.'
+		},
+		char_marcus: {
+			role: 'Jefe de Operaciones Tácticas & Contramedidas de Inercia',
+			bio: 'Auditor implacable de sistemas. Especialista en desarticular la Inercia Corporativa, patrones oscuros de manipulación y tablas de líderes tóxicas que destruyen el clima colaborativo.'
+		},
+		char_kaelen: {
+			role: 'Especialista en Infiltración & Auditoría de Métricas Ocultas',
+			bio: 'Estratega de operaciones de campo. Experto en economía narrativa, alineación de facciones y dinámicas de interdependencia positiva donde cada rol del equipo es indispensable.'
+		},
+		char_giocchi: {
+			role: 'Núcleo de Inteligencia Artificial & Calibración Conceptual',
+			bio: 'Inteligencia Artificial táctica entrenada en los principios de la metodología BEM. Evalúa las reflexiones de los agentes en tiempo real y calibra su perspectiva crítica.'
+		}
+	};
+
 	interface CommunicationItem {
 		id: string;
+		character_id?: string;
 		speaker_name: string;
+		speaker_role?: string;
+		speaker_bio?: string;
 		portrait_url?: string | null;
 		badge?: string;
 		badge_type?: 'tactical' | 'story';
 		text: string;
+	}
+
+	let selectedCharacterModal = $state<{
+		name: string;
+		role: string;
+		portrait_url?: string | null;
+		bio: string;
+		badge?: string;
+	} | null>(null);
+
+	function openCharacterModal(comm: CommunicationItem) {
+		const charMap = new Map((data.characters || []).map((c: any) => [c.id, c]));
+		const char = comm.character_id ? charMap.get(comm.character_id) : null;
+		const bioInfo = comm.character_id ? CHARACTER_BIOS[comm.character_id] : null;
+		selectedCharacterModal = {
+			name: comm.speaker_name,
+			role: comm.speaker_role || char?.role || bioInfo?.role || 'Enlace de la Agencia',
+			portrait_url: comm.portrait_url,
+			bio: comm.speaker_bio || bioInfo?.bio || char?.role || 'Miembro oficial de la Agencia Antropológica Huizinga desplegado en la convención.',
+			badge: comm.badge
+		};
+		playModalOpen();
+	}
+
+	function closeCharacterModal() {
+		selectedCharacterModal = null;
 	}
 
 	const activeCommunications = $derived.by<CommunicationItem[]>(() => {
@@ -1131,9 +1186,13 @@
 		const unlockedComms = (player?.game_status?.unlocked_communications || []) as any[];
 		for (const comm of unlockedComms) {
 			const char = comm.character_id ? charMap.get(comm.character_id) : null;
+			const bioInfo = comm.character_id ? CHARACTER_BIOS[comm.character_id] : null;
 			list.push({
 				id: comm.id,
+				character_id: comm.character_id,
 				speaker_name: char?.name || 'Operador Cipher',
+				speaker_role: char?.role || bioInfo?.role || 'Soporte Táctico y Telecomunicaciones',
+				speaker_bio: bioInfo?.bio || char?.role || 'Enlace operativo de la Agencia.',
 				portrait_url: char?.portrait_url || '/images/gamescon/characters/char_cipher.jpg',
 				badge: comm.badge || 'DIRECTIVA DE CAMPO',
 				badge_type: comm.badge_type || 'tactical',
@@ -1145,7 +1204,10 @@
 		if (list.length === 0 && cipherPersistentMessage) {
 			list.push({
 				id: 'cipher_tactical_directive',
+				character_id: 'char_cipher',
 				speaker_name: 'Operador Cipher',
+				speaker_role: CHARACTER_BIOS.char_cipher.role,
+				speaker_bio: CHARACTER_BIOS.char_cipher.bio,
 				portrait_url: '/images/gamescon/characters/char_cipher.jpg',
 				badge: 'DIRECTIVA DE MISIÓN',
 				badge_type: 'tactical',
@@ -1156,10 +1218,15 @@
 		// 3. Diálogos de Historia / Transmisiones de Personajes (desde bem.eventgage_event_dialogues):
 		const validDbDialogues = (data.dialogues || []).filter((d: any) => d.id !== 'dialogue_welcome');
 		for (const d of validDbDialogues) {
+			const char = d.character_id ? charMap.get(d.character_id) : null;
+			const bioInfo = d.character_id ? CHARACTER_BIOS[d.character_id] : null;
 			list.push({
 				id: d.id,
-				speaker_name: d.speaker_name || 'Enlace de Red',
-				portrait_url: d.portrait_url || null,
+				character_id: d.character_id,
+				speaker_name: char?.name || d.speaker_name || 'Dra. Elena Huizinga',
+				speaker_role: char?.role || bioInfo?.role || 'Transmisión Oficial',
+				speaker_bio: bioInfo?.bio || char?.role || 'Transmisión oficial de la Agencia.',
+				portrait_url: char?.portrait_url || d.portrait_url || '/images/gamescon/characters/char_huizinga.jpg',
 				badge: d.title || 'TRANSMISIÓN DE HISTORIA',
 				badge_type: 'story',
 				text: d.text
@@ -2157,6 +2224,57 @@
 			</div>
 		{/if}
 
+		<!-- MODAL DE EXPEDIENTE DE PERSONAJE (AL HACER TAP EN COMUNICACIÓN) -->
+		{#if selectedCharacterModal}
+			<div
+				class="modal-overlay"
+				role="button"
+				tabindex="0"
+				onclick={closeCharacterModal}
+				onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') closeCharacterModal(); }}
+			>
+				<div
+					class="modal-card char-detail-modal"
+					role="dialog"
+					aria-modal="true"
+					tabindex="-1"
+					onclick={(e) => e.stopPropagation()}
+					onkeydown={(e) => e.stopPropagation()}
+				>
+					<button type="button" class="modal-close-btn" aria-label="Cerrar expediente" onclick={closeCharacterModal}>
+						<X size={16} />
+					</button>
+
+					<div class="char-detail-header">
+						{#if selectedCharacterModal.portrait_url}
+							<img
+								src={selectedCharacterModal.portrait_url}
+								alt={selectedCharacterModal.name}
+								class="char-detail-avatar"
+							/>
+						{:else}
+							<div class="char-detail-avatar img-placeholder">
+								<Radio size={28} />
+							</div>
+						{/if}
+						<div class="char-detail-info">
+							<span class="char-detail-badge">{selectedCharacterModal.badge || 'EXPEDIENTE DE AGENCIA'}</span>
+							<h3>{selectedCharacterModal.name}</h3>
+							<span class="char-detail-role">{selectedCharacterModal.role}</span>
+						</div>
+					</div>
+
+					<div class="char-detail-body">
+						<p>{selectedCharacterModal.bio}</p>
+					</div>
+
+					<button type="button" class="primary-btn modal-close" onclick={closeCharacterModal}>
+						Cerrar Expediente
+					</button>
+				</div>
+			</div>
+		{/if}
+
 		<!-- MODAL DE BIENVENIDA: OPERADOR CIPHER (sección 7.3 del diseño) -->
 		{#if showCipherWelcomeModal}
 			<div
@@ -2417,7 +2535,12 @@
 					{:else}
 						<div class="comms-list">
 							{#each activeCommunications as comm (comm.id)}
-								<div class="dialogue-box comm-card-{comm.badge_type || 'tactical'}">
+								<button
+									type="button"
+									class="dialogue-box comm-card-{comm.badge_type || 'tactical'}"
+									onclick={() => openCharacterModal(comm)}
+									title="Ver expediente de {comm.speaker_name}"
+								>
 									{#if comm.portrait_url && !brokenImages[comm.id]}
 										<img
 											src={comm.portrait_url}
@@ -2438,8 +2561,12 @@
 											{/if}
 										</div>
 										<p>{comm.text}</p>
+										<div class="comm-tap-hint">
+											<User size={12} />
+											<span>Toca para ver expediente</span>
+										</div>
 									</div>
-								</div>
+								</button>
 							{/each}
 						</div>
 					{/if}
@@ -4046,6 +4173,7 @@
 		gap: 0.75rem;
 	}
 	.dialogue-box {
+		width: 100%;
 		background: rgba(30, 41, 59, 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-lg);
@@ -4053,6 +4181,20 @@
 		display: flex;
 		gap: 0.75rem;
 		align-items: center;
+		text-align: left;
+		cursor: pointer;
+		color: inherit;
+		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		position: relative;
+	}
+	.dialogue-box:hover {
+		background: rgba(30, 41, 59, 0.75);
+		border-color: rgba(255, 255, 255, 0.2);
+		transform: translateY(-2px);
+		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+	}
+	.dialogue-box:active {
+		transform: translateY(0);
 	}
 	.dialogue-box.comm-card-tactical {
 		border-left: 3px solid #10b981;
@@ -4085,12 +4227,121 @@
 		background: rgba(168, 85, 247, 0.2);
 		color: #c084fc;
 	}
-	.gm-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid #a855f7; }
+	.gm-avatar { width: 44px; height: 44px; aspect-ratio: 1 / 1; border-radius: 50%; object-fit: cover; border: 2px solid #a855f7; flex-shrink: 0; }
 	.cipher-avatar { color: #34d399; border-color: #10b981 !important; }
 	.story-avatar { color: #c084fc; border-color: #a855f7 !important; }
 	.dialogue-text { flex: 1; min-width: 0; }
 	.dialogue-text strong { font-size: var(--text-base); color: #f1f5f9; display: block; margin-bottom: 0.15rem; }
 	.dialogue-text p { margin: 0; font-size: var(--text-base); color: #cbd5e1; font-style: italic; line-height: 1.3; }
+	.comm-tap-hint {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.65rem;
+		color: #94a3b8;
+		margin-top: 0.4rem;
+		opacity: 0.85;
+		font-family: var(--font-mono);
+		letter-spacing: 0.02em;
+	}
+
+	/* CHARACTER DETAIL MODAL */
+	.char-detail-modal {
+		background: rgba(15, 23, 42, 0.95);
+		backdrop-filter: blur(16px);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(99, 102, 241, 0.15);
+		padding: 1.5rem;
+		max-width: 420px;
+		width: 100%;
+		border-radius: var(--radius-xl);
+		position: relative;
+		text-align: left;
+	}
+	.char-detail-header {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1.25rem;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+		padding-bottom: 1.25rem;
+	}
+	.char-detail-avatar {
+		width: 72px;
+		height: 72px;
+		aspect-ratio: 1 / 1;
+		object-fit: cover;
+		object-position: center top;
+		border-radius: 50%;
+		border: 2px solid #818cf8;
+		box-shadow: 0 0 15px rgba(129, 140, 248, 0.3);
+		flex-shrink: 0;
+	}
+	.char-detail-avatar.img-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(30, 41, 59, 0.8);
+		color: #818cf8;
+	}
+	.char-detail-info {
+		flex: 1;
+		min-width: 0;
+	}
+	.char-detail-badge {
+		font-family: var(--font-mono);
+		font-size: 0.65rem;
+		font-weight: 800;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #818cf8;
+		background: rgba(99, 102, 241, 0.15);
+		padding: 0.15rem 0.5rem;
+		border-radius: 4px;
+		display: inline-block;
+		margin-bottom: 0.35rem;
+	}
+	.char-detail-info h3 {
+		margin: 0 0 0.25rem 0;
+		font-size: var(--text-lg);
+		color: #f8fafc;
+		font-weight: 700;
+	}
+	.char-detail-role {
+		font-size: var(--text-xs);
+		color: #94a3b8;
+		line-height: 1.35;
+		display: block;
+	}
+	.char-detail-body {
+		margin-bottom: 1.5rem;
+	}
+	.char-detail-body p {
+		color: #cbd5e1;
+		font-size: var(--text-md);
+		line-height: 1.55;
+		margin: 0;
+	}
+	.modal-close-btn {
+		position: absolute;
+		top: 1rem;
+		right: 1rem;
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: #94a3b8;
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+	.modal-close-btn:hover {
+		background: rgba(255, 255, 255, 0.15);
+		color: #f8fafc;
+	}
 
 	/* MAP */
 	.map-wrapper { position: relative; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
@@ -4652,7 +4903,25 @@
 
 	/* PROFILE */
 	.profile-card { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255,255,255,0.1); padding: 1.5rem; border-radius: var(--radius-lg); text-align: center; margin-bottom: 1.5rem; }
-	.p-avatar { width: 76px; height: 76px; border-radius: 50%; border: 3px solid #6366f1; margin-bottom: 0.5rem; }
+	.p-avatar {
+		width: 92px;
+		height: 92px;
+		aspect-ratio: 1 / 1;
+		object-fit: cover;
+		object-position: center 15%;
+		border-radius: 50%;
+		border: 3px solid #6366f1;
+		margin: 0 auto 0.75rem auto;
+		display: block;
+		flex-shrink: 0;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+	}
+	.p-avatar.img-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(15, 23, 42, 0.6);
+	}
 	.profile-card h3 { margin: 0 0 0.25rem 0; font-size: var(--text-xl); }
 	.p-fac { margin: 0 0 0.75rem 0; font-size: var(--text-md); color: #94a3b8; }
 	.profile-level-badge {
