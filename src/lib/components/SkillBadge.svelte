@@ -203,9 +203,12 @@
 		background: rgba(0, 0, 0, 0.75);
 		backdrop-filter: blur(8px);
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: center;
-		padding: 1.25rem;
+		padding: 1.25rem 1rem calc(2rem + env(safe-area-inset-bottom, 20px)) 1rem;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		box-sizing: border-box;
 		z-index: 300;
 		animation: fadeIn 0.15s ease-out;
 	}
@@ -217,12 +220,28 @@
 		padding: 1.5rem;
 		width: 100%;
 		max-width: 380px;
+		max-height: calc(100dvh - 3rem);
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
 		box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), 0 0 20px rgba(99, 102, 241, 0.15);
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		margin: auto 0;
 		animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 		box-sizing: border-box;
+	}
+
+	@media (max-width: 480px) {
+		.skill-modal-overlay {
+			padding: 0.85rem 0.65rem calc(1.75rem + env(safe-area-inset-bottom, 16px)) 0.65rem;
+		}
+		.skill-modal-card {
+			padding: 1.15rem 0.85rem;
+			gap: 0.75rem;
+			max-height: calc(100dvh - 2rem);
+			margin: 0 auto;
+		}
 	}
 
 	.skill-modal-header {

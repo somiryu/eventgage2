@@ -195,9 +195,12 @@
 		background: rgba(0, 0, 0, 0.75);
 		backdrop-filter: blur(6px);
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: center;
-		padding: 1.25rem;
+		padding: 1.25rem 1rem calc(2rem + env(safe-area-inset-bottom, 20px)) 1rem;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		box-sizing: border-box;
 		z-index: 210;
 	}
 	.vault-card {
@@ -207,12 +210,26 @@
 		padding: 1.5rem;
 		width: 100%;
 		max-width: 440px;
-		max-height: 85vh;
+		max-height: calc(100dvh - 3rem);
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
 		box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		margin: auto 0;
 		box-sizing: border-box;
+	}
+	@media (max-width: 480px) {
+		.vault-overlay {
+			padding: 0.85rem 0.65rem calc(1.75rem + env(safe-area-inset-bottom, 16px)) 0.65rem;
+		}
+		.vault-card {
+			padding: 1.15rem 0.85rem;
+			gap: 0.65rem;
+			max-height: calc(100dvh - 2rem);
+			margin: 0 auto;
+		}
 	}
 	.vault-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 	.vault-header h3 { margin: 0; font-size: var(--text-xl, 1.15rem); color: #fff; }

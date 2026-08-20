@@ -480,9 +480,12 @@
 		backdrop-filter: blur(8px);
 		z-index: 100;
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: center;
-		padding: 1rem;
+		padding: 1.25rem 1rem calc(2rem + env(safe-area-inset-bottom, 20px)) 1rem;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		box-sizing: border-box;
 	}
 	.modal-card {
 		background: #1e293b;
@@ -491,9 +494,22 @@
 		max-width: 520px;
 		width: 100%;
 		padding: 1.5rem;
-		max-height: 90vh;
+		max-height: calc(100dvh - 3rem);
 		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		margin: auto 0;
+		box-sizing: border-box;
 		box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+	}
+	@media (max-width: 480px) {
+		.modal-overlay {
+			padding: 0.85rem 0.65rem calc(1.75rem + env(safe-area-inset-bottom, 16px)) 0.65rem;
+		}
+		.modal-card {
+			padding: 1.15rem 0.85rem;
+			max-height: calc(100dvh - 2rem);
+			margin: 0 auto;
+		}
 	}
 	.modal-card h3 {
 		margin: 0 0 1.25rem 0;
