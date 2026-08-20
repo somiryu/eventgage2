@@ -814,6 +814,73 @@ test('Analytics Engine: Behavioral Tracking, Hourly Velocity & CSV Reports', asy
 		assert.ok(csv.includes('Contactos_Intercambiados,1'));
 		assert.ok(csv.includes('Tratados_Firmados,1'));
 	});
+
+	await t.test('debe capturar el texto completo de reflexiones IA y generar reporte CSV de ai_prompts', () => {
+		const aiPromptEvents = [
+			{
+				event_id: mockEventId,
+				user_id: 'usr_01',
+				event_name: 'ai_prompt_evaluated',
+				category: 'mechanic',
+				payload: {
+					mission_id: 'm01_giocchi_calibration',
+					mission_title: 'Misión 01: Calibración Conceptual',
+					player_name: 'Agente Alex Vance',
+					faction_id: 'fac_aprendizaje_activo',
+					faction_name: 'División de Aprendizaje Activo',
+					avatar_title: 'El Diseñador Conductual',
+					user_response_text: 'El mito es pensar que gamificar es solo poner puntos.',
+					giocchi_feedback: 'Excelente análisis crítico del mito.',
+					score_xp: 35,
+					is_fallback: false,
+					response_length: 53
+				},
+				created_at: '2026-08-20T12:35:00Z'
+			}
+		];
+
+		function generateAiPromptsCSV(events) {
+			const headers = [
+				'Fecha_Hora_ISO',
+				'User_ID',
+				'Nombre_Agente',
+				'Faccion',
+				'Rol_Avatar',
+				'ID_Mision',
+				'Titulo_Mision',
+				'Texto_Escrito_Jugador',
+				'Puntaje_XP_GIOCCHI',
+				'Es_Modo_Offline',
+				'Feedback_GIOCCHI'
+			];
+			const rows = events.map((e) => {
+				const p = e.payload || {};
+				return [
+					e.created_at || '',
+					e.user_id || '',
+					`"${(p.player_name || 'Agente').replace(/"/g, '""')}"`,
+					`"${(p.faction_name || p.faction_id || '').replace(/"/g, '""')}"`,
+					`"${(p.avatar_title || '').replace(/"/g, '""')}"`,
+					p.mission_id || '',
+					`"${(p.mission_title || '').replace(/"/g, '""')}"`,
+					`"${(p.user_response_text || '').replace(/"/g, '""')}"`,
+					p.score_xp || 0,
+					p.is_fallback ? 'SI' : 'NO',
+					`"${(p.giocchi_feedback || '').replace(/"/g, '""')}"`
+				];
+			});
+			return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+		}
+
+		const csv = generateAiPromptsCSV(aiPromptEvents);
+		assert.ok(csv.includes('Texto_Escrito_Jugador'));
+		assert.ok(csv.includes('Feedback_GIOCCHI'));
+		assert.ok(csv.includes('El mito es pensar que gamificar es solo poner puntos.'));
+		assert.ok(csv.includes('Excelente análisis crítico del mito.'));
+		assert.ok(csv.includes('Agente Alex Vance'));
+		assert.ok(csv.includes('35'));
+		assert.ok(csv.includes('NO'));
+	});
 });
 
 // --- 10. TESTS DE COMUNICACIONES DESBLOQUEABLES POR MISIÓN & REMOVE_ON_CODE ---

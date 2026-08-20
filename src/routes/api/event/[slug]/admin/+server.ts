@@ -22,6 +22,7 @@ import {
 	getMechanicsBreakdownReport,
 	getNetworkingAnalyticsReport,
 	getEconomyAnalyticsReport,
+	getAiPromptReflections,
 	exportAnalyticsCSV
 } from '$lib/server/analyticsService';
 import { parseSignedSession } from '$lib/server/session';
@@ -163,6 +164,11 @@ export const POST: RequestHandler = async ({ params, request, cookies }) => {
 		if (action === 'get_economy_report') {
 			const economy = await getEconomyAnalyticsReport(event.id);
 			return json({ success: true, economy });
+		}
+
+		if (action === 'get_ai_reflections') {
+			const reflections = await getAiPromptReflections(event.id);
+			return json({ success: true, reflections });
 		}
 
 		if (action === 'export_analytics_csv') {

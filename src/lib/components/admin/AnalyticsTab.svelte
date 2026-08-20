@@ -11,6 +11,10 @@
 	import Clock from '@lucide/svelte/icons/clock';
 	import Target from '@lucide/svelte/icons/target';
 
+	import Bot from '@lucide/svelte/icons/bot';
+	import MessageSquareText from '@lucide/svelte/icons/message-square-text';
+	import Search from '@lucide/svelte/icons/search';
+
 	let {
 		slug,
 		showMessage
@@ -29,13 +33,15 @@
 	let mechanics = $state<any>(null);
 	let networking = $state<any>(null);
 	let economy = $state<any>(null);
+	let reflections = $state<any[]>([]);
+	let reflectionSearch = $state('');
 
 	let activeTimelineView = $state<'missions' | 'activity'>('missions');
-	let selectedExportType = $state<'overview' | 'missions' | 'hourly' | 'networking' | 'economy'>('overview');
+	let selectedExportType = $state<'overview' | 'missions' | 'hourly' | 'networking' | 'economy' | 'ai_prompts'>('overview');
 
 	async function loadAnalyticsData() {
 		try {
-			const [resOverview, resHourlyMissions, resHourlyActivity, resMechanics, resNetworking, resEconomy] = await Promise.all([
+			const [resOverview, resHourlyMissions, resHourlyActivity, resMechanics, resNetworking, resEconomy, resReflections] = await Promise.all([
 				fetch(`/api/event/${slug}/admin`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -65,6 +71,11 @@
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ action: 'get_economy_report' })
+				}).then((r) => r.json()),
+				fetch(`/api/event/${slug}/admin`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ action: 'get_ai_reflections' })
 				}).then((r) => r.json())
 			]);
 
@@ -74,6 +85,7 @@
 			if (resMechanics.success) mechanics = resMechanics.mechanics;
 			if (resNetworking.success) networking = resNetworking.networking;
 			if (resEconomy.success) economy = resEconomy.economy;
+			if (resReflections.success) reflections = resReflections.reflections;
 		} catch (err) {
 			console.error('Error al cargar analíticas:', err);
 			showMessage('error', 'No se pudieron cargar las analíticas en tiempo real.');
@@ -124,6 +136,19 @@
 			exporting = false;
 		}
 	}
+
+	const filteredReflections = $derived(
+		reflections.filter((r) => {
+			if (!reflectionSearch.trim()) return true;
+			const q = reflectionSearch.toLowerCase();
+			return (
+				(r.player_name || '').toLowerCase().includes(q) ||
+				(r.mission_title || '').toLowerCase().includes(q) ||
+				(r.faction_name || '').toLowerCase().includes(q) ||
+				(r.user_response_text || '').toLowerCase().includes(q)
+			);
+		})
+	);
 
 	// Cálculo del valor máximo para escalar visualmente las barras horarias
 	const maxHourlyMissions = $derived(
@@ -401,6 +426,92 @@
 			</div>
 		</div>
 
+		<!-- REGISTRO DE REFLEXIONES GIOCCHI -->
+		<div class="analytics-card reflections-card">
+			<div class="card-header">
+				<div>
+					<h3 class="card-title">
+						<MessageSquareText size={18} />
+						Reflexiones de Agentes ante GIOCCHI ({reflections.length})
+					</h3>
+					<p class="card-subtitle">
+						Monitoreo cualitativo de las respuestas redactadas por los participantes en misiones de Inteligencia Artificial.
+					</p>
+				</div>
+
+				<div class="reflections-search-wrap">
+					<Search size={14} class="search-icon" />
+					<input
+						type="text"
+						bind:value={reflectionSearch}
+						placeholder="Buscar por agente, misión o texto..."
+						class="reflection-search-input"
+					/>
+				</div>
+			</div>
+
+			{#if filteredReflections.length === 0}
+				<div class="empty-reflections">
+					{#if reflections.length === 0}
+						<Bot size={28} class="empty-icon" />
+						<p>Aún no hay reflexiones de IA registradas en este evento.</p>
+					{:else}
+						<Search size={28} class="empty-icon" />
+						<p>No se encontraron reflexiones que coincidan con la búsqueda.</p>
+					{/if}
+				</div>
+			{:else}
+				<div class="table-responsive reflections-table-wrap">
+					<table class="analytics-table">
+						<thead>
+							<tr>
+								<th>Agente / Facción</th>
+								<th>Misión</th>
+								<th>Texto Escrito por el Jugador</th>
+								<th>Puntaje XP</th>
+								<th>Evaluación de GIOCCHI</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each filteredReflections as ref}
+								<tr>
+									<td class="player-cell">
+										<strong class="player-name">{ref.player_name || 'Agente'}</strong>
+										<span class="player-faction">{ref.faction_name || ref.faction_id || 'Sin Facción'}</span>
+										{#if ref.avatar_title}
+											<span class="player-role">{ref.avatar_title}</span>
+										{/if}
+									</td>
+									<td class="mission-cell">
+										<span class="mission-title">{ref.mission_title || ref.mission_id}</span>
+										<span class="mission-date">{new Date(ref.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+									</td>
+									<td class="response-cell">
+										<div class="response-bubble">
+											"{ref.user_response_text || 'Sin texto registrado'}"
+										</div>
+									</td>
+									<td class="score-cell">
+										<span class="pill-score {ref.score_xp >= 25 ? 'score-high' : 'score-low'}">
+											+{ref.score_xp} XP
+										</span>
+										{#if ref.is_fallback}
+											<span class="fallback-tag">Offline</span>
+										{/if}
+									</td>
+									<td class="feedback-cell">
+										<div class="feedback-text">
+											{ref.giocchi_feedback || 'Sin retroalimentación'}
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</div>
+
 		<!-- EXPORTACIÓN DE REPORTES -->
 		<div class="analytics-card export-card">
 			<div class="card-header">
@@ -418,6 +529,7 @@
 					<label for="export-type-select" class="form-label">Tipo de Reporte:</label>
 					<select id="export-type-select" bind:value={selectedExportType} class="select-field">
 						<option value="overview">Resumen Ejecutivo de KPIs</option>
+						<option value="ai_prompts">Reflexiones de Jugadores en Retos de IA (GIOCCHI)</option>
 						<option value="hourly">Misiones Completadas por Franjas Horarias</option>
 						<option value="missions">Histórico Detallado de Resoluciones de Misión</option>
 						<option value="networking">Registro de Intercambios de Contactos</option>
@@ -891,6 +1003,161 @@
 	.btn-export:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	/* REFLECTIONS SECTION */
+	.reflections-card {
+		background: rgba(15, 23, 42, 0.85);
+	}
+
+	.reflections-search-wrap {
+		position: relative;
+		display: flex;
+		align-items: center;
+		min-width: 260px;
+	}
+
+	.reflections-search-wrap :global(.search-icon) {
+		position: absolute;
+		left: 0.75rem;
+		color: #64748b;
+		pointer-events: none;
+	}
+
+	.reflection-search-input {
+		width: 100%;
+		background: rgba(10, 15, 30, 0.7);
+		border: 1px solid rgba(71, 85, 105, 0.5);
+		border-radius: 8px;
+		padding: 0.5rem 0.75rem 0.5rem 2.2rem;
+		color: #f1f5f9;
+		font-size: 0.825rem;
+		outline: none;
+		transition: border-color 0.2s ease;
+	}
+
+	.reflection-search-input:focus {
+		border-color: #a855f7;
+	}
+
+	.empty-reflections {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 2.5rem 1rem;
+		color: #64748b;
+		gap: 0.75rem;
+	}
+
+	.empty-reflections :global(.empty-icon) {
+		color: #475569;
+	}
+
+	.reflections-table-wrap {
+		max-height: 480px;
+		overflow-y: auto;
+	}
+
+	.player-cell {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 140px;
+	}
+
+	.player-name {
+		color: #f8fafc;
+		font-size: 0.875rem;
+	}
+
+	.player-faction {
+		font-size: 0.7rem;
+		color: #a855f7;
+		font-weight: 500;
+	}
+
+	.player-role {
+		font-size: 0.65rem;
+		color: #64748b;
+	}
+
+	.mission-cell {
+		min-width: 130px;
+	}
+
+	.mission-title {
+		display: block;
+		font-size: 0.825rem;
+		font-weight: 600;
+		color: #e2e8f0;
+	}
+
+	.mission-date {
+		font-size: 0.7rem;
+		color: #64748b;
+	}
+
+	.response-cell {
+		max-width: 320px;
+		min-width: 220px;
+	}
+
+	.response-bubble {
+		background: rgba(30, 41, 59, 0.6);
+		border-left: 3px solid #a855f7;
+		padding: 0.6rem 0.8rem;
+		border-radius: 0 8px 8px 0;
+		font-size: 0.8rem;
+		color: #f1f5f9;
+		line-height: 1.4;
+		font-style: italic;
+		word-break: break-word;
+	}
+
+	.score-cell {
+		min-width: 90px;
+		vertical-align: middle;
+	}
+
+	.pill-score {
+		display: inline-block;
+		font-weight: 700;
+		font-size: 0.75rem;
+		padding: 0.25rem 0.55rem;
+		border-radius: 6px;
+	}
+
+	.score-high {
+		background: rgba(168, 85, 247, 0.15);
+		color: #c084fc;
+		border: 1px solid rgba(168, 85, 247, 0.3);
+	}
+
+	.score-low {
+		background: rgba(239, 68, 68, 0.15);
+		color: #f87171;
+		border: 1px solid rgba(239, 68, 68, 0.3);
+	}
+
+	.fallback-tag {
+		display: block;
+		font-size: 0.65rem;
+		color: #f59e0b;
+		margin-top: 0.25rem;
+		font-weight: 600;
+	}
+
+	.feedback-cell {
+		max-width: 340px;
+		min-width: 200px;
+	}
+
+	.feedback-text {
+		font-size: 0.78rem;
+		color: #94a3b8;
+		line-height: 1.35;
+		word-break: break-word;
 	}
 
 	/* ANIMACIONES */

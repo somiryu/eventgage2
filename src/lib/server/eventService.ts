@@ -2595,6 +2595,13 @@ async function resolveAiPromptChallenge(userId: string, eventId: string, player:
 
 	trackAnalyticsEvent(eventId, userId, 'ai_prompt_evaluated', 'mechanic', {
 		mission_id: mission.id,
+		mission_title: mission.title,
+		player_name: player.avatar?.name || player.avatar?.title || 'Agente',
+		faction_id: player.avatar?.faction_id || '',
+		faction_name: factionName || '',
+		avatar_title: avatarName || '',
+		user_response_text: trimmed,
+		giocchi_feedback: evaluation.feedback_text,
 		score_xp: evaluation.xp_awarded,
 		is_fallback: evaluation.isFallback,
 		response_length: trimmed.length

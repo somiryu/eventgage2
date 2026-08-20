@@ -157,7 +157,7 @@ export function seedMockAnalyticsEvents(eventId: string): void {
 		{ event_id: eventId, user_id: 'usr_01', event_name: 'contact_scanned', category: 'social', payload: { target_user_id: 'usr_02', scanner_faction_id: 'fac_aprendizaje_activo', target_faction_id: 'fac_impacto_valor' }, created_at: `${prefix}T12:15:00.000Z` },
 		{ event_id: eventId, user_id: 'usr_02', event_name: 'contact_scanned', category: 'social', payload: { target_user_id: 'usr_03', scanner_faction_id: 'fac_impacto_valor', target_faction_id: 'fac_agilidad_autonomia' }, created_at: `${prefix}T12:22:00.000Z` },
 		{ event_id: eventId, user_id: 'usr_03', event_name: 'contact_scanned', category: 'social', payload: { target_user_id: 'usr_01', scanner_faction_id: 'fac_agilidad_autonomia', target_faction_id: 'fac_aprendizaje_activo' }, created_at: `${prefix}T12:29:00.000Z` },
-		{ event_id: eventId, user_id: 'usr_01', event_name: 'ai_prompt_evaluated', category: 'mechanic', payload: { mission_id: 'm_ai_prompt_01', score_xp: 35, is_fallback: false, response_length: 180 }, created_at: `${prefix}T12:35:00.000Z` },
+		{ event_id: eventId, user_id: 'usr_01', event_name: 'ai_prompt_evaluated', category: 'mechanic', payload: { mission_id: 'm01_giocchi_calibration', mission_title: 'Misión 01: Calibración Conceptual', player_name: 'Agente Alex Vance', faction_id: 'fac_aprendizaje_activo', faction_name: 'División de Aprendizaje Activo', avatar_title: 'El Diseñador Conductual', user_response_text: 'El mito es creer que la gamificación solo sirve para entretener o dar puntos de descuento, ignorando que el aprendizaje requiere andamiaje y retroalimentación oportuna para consolidar hábitos reales.', giocchi_feedback: 'Excelente análisis conductual. Identificas con precisión que el valor reside en el andamiaje y la retroalimentación formativa, no en cosmética.', score_xp: 35, is_fallback: false, response_length: 180 }, created_at: `${prefix}T12:35:00.000Z` },
 		{ event_id: eventId, user_id: 'usr_01', event_name: 'mission_completed', category: 'progression', payload: { mission_id: 'm_ai_prompt_01', mission_type: 'ai_prompt_challenge', xp_awarded: 65, cp_awarded: 1 }, created_at: `${prefix}T12:35:00.000Z` },
 		{ event_id: eventId, user_id: 'usr_01', event_name: 'milestone_reached', category: 'progression', payload: { count: 3, rank: 2, rank_title: 'Agente de Campo', sp_bonus: 2 }, created_at: `${prefix}T12:35:00.000Z` },
 		{ event_id: eventId, user_id: 'usr_01', event_name: 'level_up', category: 'progression', payload: { old_level: 1, new_level: 2, total_xp: 265 }, created_at: `${prefix}T12:35:00.000Z` },
@@ -579,12 +579,57 @@ export async function getEconomyAnalyticsReport(eventId: string) {
 	};
 }
 
+export interface AiPromptReflectionRecord {
+	created_at: string;
+	user_id: string | null;
+	player_name: string;
+	faction_id: string;
+	faction_name: string;
+	avatar_title: string;
+	mission_id: string;
+	mission_title: string;
+	user_response_text: string;
+	score_xp: number;
+	is_fallback: boolean;
+	giocchi_feedback: string;
+	response_length: number;
+}
+
+/**
+ * Obtiene todas las reflexiones de texto generadas por los jugadores en retos ai_prompt_challenge.
+ */
+export async function getAiPromptReflections(eventId: string): Promise<AiPromptReflectionRecord[]> {
+	const events = await getRawAnalyticsEvents(eventId);
+	const promptEvents = events.filter((e) => e.event_name === 'ai_prompt_evaluated');
+
+	return promptEvents
+		.map((e) => {
+			const p = e.payload || {};
+			return {
+				created_at: e.created_at || new Date().toISOString(),
+				user_id: e.user_id || null,
+				player_name: p.player_name || 'Agente',
+				faction_id: p.faction_id || '',
+				faction_name: p.faction_name || '',
+				avatar_title: p.avatar_title || '',
+				mission_id: p.mission_id || '',
+				mission_title: p.mission_title || p.mission_id || '',
+				user_response_text: p.user_response_text || '',
+				score_xp: typeof p.score_xp === 'number' ? p.score_xp : 0,
+				is_fallback: !!p.is_fallback,
+				giocchi_feedback: p.giocchi_feedback || '',
+				response_length: typeof p.response_length === 'number' ? p.response_length : (p.user_response_text || '').length
+			};
+		})
+		.reverse();
+}
+
 /**
  * Generador de archivos CSV estructurados para exportación analítica.
  */
 export async function exportAnalyticsCSV(
 	eventId: string,
-	reportType: 'overview' | 'missions' | 'hourly' | 'networking' | 'economy'
+	reportType: 'overview' | 'missions' | 'hourly' | 'networking' | 'economy' | 'ai_prompts' | 'reflections'
 ): Promise<string> {
 	switch (reportType) {
 		case 'hourly': {
@@ -640,6 +685,38 @@ export async function exportAnalyticsCSV(
 				p.payload?.category || '',
 				p.payload?.cost_cp || 0,
 				p.payload?.token_generated || ''
+			]);
+			return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+		}
+
+		case 'ai_prompts':
+		case 'reflections': {
+			const reflections = await getAiPromptReflections(eventId);
+			const headers = [
+				'Fecha_Hora_ISO',
+				'User_ID',
+				'Nombre_Agente',
+				'Faccion',
+				'Rol_Avatar',
+				'ID_Mision',
+				'Titulo_Mision',
+				'Texto_Escrito_Jugador',
+				'Puntaje_XP_GIOCCHI',
+				'Es_Modo_Offline',
+				'Feedback_GIOCCHI'
+			];
+			const rows = reflections.map((r) => [
+				r.created_at || '',
+				r.user_id || '',
+				`"${(r.player_name || 'Agente').replace(/"/g, '""')}"`,
+				`"${(r.faction_name || r.faction_id || '').replace(/"/g, '""')}"`,
+				`"${(r.avatar_title || '').replace(/"/g, '""')}"`,
+				r.mission_id || '',
+				`"${(r.mission_title || '').replace(/"/g, '""')}"`,
+				`"${(r.user_response_text || '').replace(/"/g, '""')}"`,
+				r.score_xp || 0,
+				r.is_fallback ? 'SI' : 'NO',
+				`"${(r.giocchi_feedback || '').replace(/"/g, '""')}"`
 			]);
 			return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
 		}
