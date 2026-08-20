@@ -45,6 +45,7 @@
 	import Users from '@lucide/svelte/icons/users';
 	import Check from '@lucide/svelte/icons/check';
 	import X from '@lucide/svelte/icons/x';
+	import CircleHelp from '@lucide/svelte/icons/circle-help';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import Building2 from '@lucide/svelte/icons/building-2';
 	import SkillBadge from '$lib/components/SkillBadge.svelte';
@@ -1265,6 +1266,7 @@
 			max_points: 0
 		}
 	);
+	let showWorldPointsModal = $state(false);
 
 	// Crear perfil / avatar si no existe
 	async function handleJoinEvent() {
@@ -2228,6 +2230,55 @@
 			</div>
 		{/if}
 
+		<!-- MODAL EXPLICATIVO: PUNTAJE MUNDIAL / INERCIA EDUCACIÓN TRADICIONAL -->
+		{#if showWorldPointsModal}
+			<div
+				class="modal-overlay"
+				role="button"
+				tabindex="0"
+				onclick={() => (showWorldPointsModal = false)}
+				onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') showWorldPointsModal = false; }}
+			>
+				<div
+					class="modal-card world-points-detail-modal"
+					role="dialog"
+					aria-modal="true"
+					tabindex="-1"
+					onclick={(e) => e.stopPropagation()}
+					onkeydown={(e) => e.stopPropagation()}
+				>
+					<button type="button" class="modal-close-btn" aria-label="Cerrar" onclick={() => (showWorldPointsModal = false)}>
+						<X size={16} />
+					</button>
+
+					<div class="world-pts-modal-header">
+						<div class="world-pts-modal-icon">
+							<Zap size={24} />
+						</div>
+						<div class="world-pts-modal-titles">
+							<span class="world-pts-badge">OBJETIVO COLECTIVO GLOBAL</span>
+							<h3>{worldPoints.display_name}</h3>
+							<strong class="mono world-pts-val">{worldPoints.current_points} / {worldPoints.max_points} PUNTOS</strong>
+						</div>
+					</div>
+
+					<div class="world-pts-modal-body">
+						<p class="world-pts-main-text">
+							Este puntaje es modificado por todos los jugadores, no sólo por ti. Completa misiones para ayudar a completar el objetivo entre todos.
+						</p>
+						<div class="world-pts-tip-box">
+							<Sparkle size={16} />
+							<p>Cada misión superada y código validado por cualquier agente en la convención empuja este indicador en tiempo real.</p>
+						</div>
+					</div>
+
+					<button type="button" class="primary-btn modal-close" onclick={() => (showWorldPointsModal = false)}>
+						Entendido
+					</button>
+				</div>
+			</div>
+		{/if}
+
 		<!-- MODAL DE EXPEDIENTE DE PERSONAJE (AL HACER TAP EN COMUNICACIÓN) -->
 		{#if selectedCharacterModal}
 			<div
@@ -2378,9 +2429,19 @@
 
 		<!-- WORLD EVENT & FACTION POINTS WIDGET -->
 		<section class="world-widget">
-			<div class="point-card event-pts">
+			<button
+				type="button"
+				class="point-card event-pts clickable"
+				onclick={() => { showWorldPointsModal = true; playModalOpen(); }}
+				title="Toca para ver información sobre este indicador colectivo"
+			>
 				<div class="pt-header">
-					<span>{worldPoints.display_name}</span>
+					<span class="pt-title-wrap">
+						<span>{worldPoints.display_name}</span>
+						<span class="pt-help-badge" aria-label="Información del indicador">
+							<CircleHelp size={13} />
+						</span>
+					</span>
 					<strong class="mono">{worldPoints.current_points} / {worldPoints.max_points}</strong>
 				</div>
 				<div class="progress-bg">
@@ -2389,7 +2450,7 @@
 						style="width: {Math.min(100, (worldPoints.current_points / (worldPoints.max_points || 1)) * 100)}%"
 					></div>
 				</div>
-			</div>
+			</button>
 
 			<FactionLeaderboardWidget
 				factions={factionsState}
@@ -3931,6 +3992,47 @@
 		clip-path: var(--corner-cut);
 		padding: 0.6rem;
 	}
+	.point-card.clickable {
+		width: 100%;
+		text-align: left;
+		cursor: pointer;
+		color: inherit;
+		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+		display: block;
+		position: relative;
+	}
+	.point-card.clickable:hover {
+		background: rgba(30, 41, 59, 0.8);
+		border-color: rgba(239, 68, 68, 0.35);
+		box-shadow: 0 4px 16px rgba(239, 68, 68, 0.15);
+		transform: translateY(-1px);
+	}
+	.point-card.clickable:active {
+		transform: translateY(0);
+	}
+	.pt-title-wrap {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.pt-help-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		color: #94a3b8;
+		background: rgba(148, 163, 184, 0.12);
+		border: 1px solid rgba(148, 163, 184, 0.25);
+		border-radius: 50%;
+		width: 18px;
+		height: 18px;
+		transition: all 0.2s ease;
+		flex-shrink: 0;
+	}
+	.point-card.clickable:hover .pt-help-badge {
+		color: #f87171;
+		background: rgba(239, 68, 68, 0.2);
+		border-color: rgba(239, 68, 68, 0.45);
+	}
 	.pulse-row {
 		display: flex;
 		align-items: center;
@@ -4386,6 +4488,98 @@
 	.modal-close-btn:hover {
 		background: rgba(255, 255, 255, 0.15);
 		color: #f8fafc;
+	}
+
+	/* WORLD POINTS DETAIL MODAL */
+	.world-points-detail-modal {
+		background: rgba(15, 23, 42, 0.95);
+		backdrop-filter: blur(16px);
+		border: 1px solid rgba(239, 68, 68, 0.25);
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(239, 68, 68, 0.15);
+		padding: 1.5rem;
+		max-width: 420px;
+		width: 100%;
+		border-radius: var(--radius-xl);
+		position: relative;
+		text-align: left;
+	}
+	.world-pts-modal-header {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1.25rem;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+		padding-bottom: 1.25rem;
+	}
+	.world-pts-modal-icon {
+		width: 52px;
+		height: 52px;
+		border-radius: var(--radius-md);
+		background: rgba(239, 68, 68, 0.15);
+		border: 1px solid rgba(239, 68, 68, 0.35);
+		color: #f87171;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+	.world-pts-modal-titles {
+		flex: 1;
+		min-width: 0;
+	}
+	.world-pts-badge {
+		font-family: var(--font-mono);
+		font-size: 0.65rem;
+		font-weight: 800;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #f87171;
+		background: rgba(239, 68, 68, 0.12);
+		padding: 0.15rem 0.5rem;
+		border-radius: 4px;
+		display: inline-block;
+		margin-bottom: 0.35rem;
+	}
+	.world-pts-modal-titles h3 {
+		margin: 0 0 0.25rem 0;
+		font-size: var(--text-lg);
+		color: #f8fafc;
+		font-weight: 700;
+	}
+	.world-pts-val {
+		font-size: var(--text-xs);
+		color: #fbbf24;
+		letter-spacing: 0.04em;
+		display: block;
+	}
+	.world-pts-modal-body {
+		margin-bottom: 1.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+	.world-pts-main-text {
+		color: #f1f5f9;
+		font-size: var(--text-md);
+		line-height: 1.5;
+		margin: 0;
+		font-weight: 500;
+	}
+	.world-pts-tip-box {
+		display: flex;
+		gap: 0.75rem;
+		background: rgba(30, 41, 59, 0.6);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: var(--radius-md);
+		padding: 0.85rem;
+		color: #94a3b8;
+		align-items: flex-start;
+	}
+	.world-pts-tip-box p {
+		margin: 0;
+		font-size: var(--text-sm);
+		line-height: 1.45;
+		color: #cbd5e1;
 	}
 
 	/* MAP */
