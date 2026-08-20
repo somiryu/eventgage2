@@ -155,7 +155,7 @@ export async function getEventFactionsAndAvatars(eventId: string) {
 				id: 'fac_aprendizaje_activo',
 				name: 'División de Aprendizaje Activo',
 				description: 'Foco: Aprendizaje Organizacional, Formación Ejecutiva y Retención de Conocimiento. Antagonista: El Sabotaje del Formulario Invisible.',
-				faction_points: memoryStore.factionPoints.fac_aprendizaje_activo ?? 15,
+				faction_points: memoryStore.factionPoints.fac_aprendizaje_activo ?? 0,
 				icon_url: '/images/gamescon/factions/fac_aprendizaje_activo.jpg'
 			},
 			{
@@ -894,8 +894,8 @@ export async function createPlayerAvatar(
 		gender: gender,
 		image_url: selectedImageUrl,
 		xp: { points: 0, level: 1 },
-		sp: selectedTemplate.default_sp || { hackeo: 10, percepcion: 10, sigilo: 10 },
-		cp: selectedTemplate.default_cp || { points: 100, icon: '⚡' },
+		sp: selectedTemplate.default_sp || { ANA: 10, EST: 10, DIS: 10, FAC: 10 },
+		cp: selectedTemplate.default_cp || { points: 0, icon: '💠' },
 		dp: selectedTemplate.default_dp || { misiones_resueltas: 0 },
 		// Rango 1 (Recluta de la Red) por defecto — ver sección 1.3.4 del diseño.
 		rank: 1,
@@ -1165,7 +1165,7 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 
 	// Sumar XP y CP
 	updatedAvatar.xp = updatedAvatar.xp || { points: 0, level: 1 };
-	updatedAvatar.cp = updatedAvatar.cp || { points: 100, icon: '⚡' };
+	updatedAvatar.cp = updatedAvatar.cp || { points: 0, icon: '💠' };
 	updatedAvatar.xp.points += xpReward;
 	updatedAvatar.cp.points += cpReward;
 
@@ -1437,7 +1437,7 @@ export async function submitVoteForPlayer(userId: string, eventId: string, missi
 		xpReward = 100;
 		cpReward = 30;
 		updatedAvatar.xp = updatedAvatar.xp || { points: 0, level: 1 };
-		updatedAvatar.cp = updatedAvatar.cp || { points: 100, icon: '⚡' };
+		updatedAvatar.cp = updatedAvatar.cp || { points: 0, icon: '💠' };
 		updatedAvatar.xp.points += xpReward;
 		updatedAvatar.cp.points += cpReward;
 	}
