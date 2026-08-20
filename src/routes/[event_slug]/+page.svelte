@@ -184,6 +184,34 @@
 	let submittingCode = $state(false);
 	let selectedMission = $state<any>(null);
 
+	function closeMissionModal() {
+		selectedMission = null;
+		codeMessage = null;
+		codeInput = '';
+		submittingCode = false;
+		resolvingMission = false;
+		missionResult = null;
+		retryResult = null;
+		retryingMission = false;
+		aiPromptText = '';
+		votedOption = null;
+		diceRollPhase = 'idle';
+	}
+
+	function openMissionModal(m: any) {
+		codeMessage = null;
+		codeInput = '';
+		submittingCode = false;
+		resolvingMission = false;
+		missionResult = null;
+		retryResult = null;
+		retryingMission = false;
+		aiPromptText = '';
+		votedOption = null;
+		diceRollPhase = 'idle';
+		selectedMission = m;
+	}
+
 	// Resolución de misiones dice_check / trivia_quiz / ai_prompt_challenge (Fase 2)
 	let resolvingMission = $state(false);
 	let missionResult = $state<any>(null);
@@ -1490,7 +1518,7 @@
 						xpAwarded: resData.xpAwarded || 25,
 						hasUnlockedCommunication: !!selectedMission?.mechanic?.unlock_communication
 					};
-					selectedMission = null;
+					closeMissionModal();
 					playSuccess();
 				}
 				const hasMilestone = resData.success && resData.milestonesReached?.length;
@@ -1564,7 +1592,7 @@
 					xpAwarded: resData.xpAwarded || 25,
 					hasUnlockedCommunication: missionHasComm
 				};
-				selectedMission = null;
+				closeMissionModal();
 				playSuccess();
 			} else {
 				missionResult = { success: false, message: resData.message || SYSTEM_ERROR_FALLBACK };
@@ -1945,7 +1973,7 @@
 								type="button"
 								class="primary-btn to-mission-btn"
 								onclick={() => {
-									selectedMission = targetMission;
+									openMissionModal(targetMission);
 									activeTab = 'missions';
 									codeRewardModal = null;
 									if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'instant' });
@@ -2564,7 +2592,7 @@
 									}
 								}
 								activeTab = 'missions';
-								selectedMission = featuredMission;
+								openMissionModal(featuredMission);
 								playModalOpen();
 							}}
 						>
@@ -2660,7 +2688,7 @@
 												return;
 											}
 										}
-										selectedMission = m;
+										openMissionModal(m);
 										playModalOpen();
 									}
 								}}
@@ -3282,8 +3310,8 @@
 				class="modal-overlay"
 				role="button"
 				tabindex="0"
-				onclick={() => (selectedMission = null)}
-				onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') selectedMission = null; }}
+				onclick={closeMissionModal}
+				onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') closeMissionModal(); }}
 			>
 				<div
 					class="modal-card"
@@ -3501,7 +3529,7 @@
 							<div class="code-feedback error">{missionResult.message}</div>
 						{/if}
 
-						<button class="secondary-btn modal-close" onclick={() => (selectedMission = null)}>Cerrar</button>
+						<button class="secondary-btn modal-close" onclick={closeMissionModal}>Cerrar</button>
 					{/if}
 				</div>
 			</div>
