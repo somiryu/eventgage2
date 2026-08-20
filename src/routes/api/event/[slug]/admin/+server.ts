@@ -15,6 +15,15 @@ import {
 	SystemUnavailableError,
 	SYSTEM_ERROR_MESSAGE
 } from '$lib/server/eventService';
+import {
+	getEventOverviewReport,
+	getHourlyMissionsAnalytics,
+	getHourlyActivityAnalytics,
+	getMechanicsBreakdownReport,
+	getNetworkingAnalyticsReport,
+	getEconomyAnalyticsReport,
+	exportAnalyticsCSV
+} from '$lib/server/analyticsService';
 import { parseSignedSession } from '$lib/server/session';
 
 export const POST: RequestHandler = async ({ params, request, cookies }) => {
@@ -124,6 +133,42 @@ export const POST: RequestHandler = async ({ params, request, cookies }) => {
 			};
 			const result = await sendAdminAlert(event.id, alertData);
 			return json(result);
+		}
+
+		if (action === 'get_analytics_overview') {
+			const overview = await getEventOverviewReport(event.id);
+			return json({ success: true, overview });
+		}
+
+		if (action === 'get_hourly_missions') {
+			const hourlyMissions = await getHourlyMissionsAnalytics(event.id);
+			return json({ success: true, hourlyMissions });
+		}
+
+		if (action === 'get_hourly_activity') {
+			const hourlyActivity = await getHourlyActivityAnalytics(event.id);
+			return json({ success: true, hourlyActivity });
+		}
+
+		if (action === 'get_mechanics_report') {
+			const mechanics = await getMechanicsBreakdownReport(event.id);
+			return json({ success: true, mechanics });
+		}
+
+		if (action === 'get_networking_report') {
+			const networking = await getNetworkingAnalyticsReport(event.id);
+			return json({ success: true, networking });
+		}
+
+		if (action === 'get_economy_report') {
+			const economy = await getEconomyAnalyticsReport(event.id);
+			return json({ success: true, economy });
+		}
+
+		if (action === 'export_analytics_csv') {
+			const reportType = body.report_type || 'overview';
+			const csv = await exportAnalyticsCSV(event.id, reportType);
+			return json({ success: true, csv, report_type: reportType });
 		}
 
 		return json({ error: 'Acción de administración no válida' }, { status: 400 });

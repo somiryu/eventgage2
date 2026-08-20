@@ -5,6 +5,7 @@
 	import Key from '@lucide/svelte/icons/key';
 	import MapIcon from '@lucide/svelte/icons/map';
 	import Radio from '@lucide/svelte/icons/radio';
+	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 	import ExternalLink from '@lucide/svelte/icons/external-link';
 
 	import LeaderboardTab from '$lib/components/admin/LeaderboardTab.svelte';
@@ -12,11 +13,12 @@
 	import CodesTab from '$lib/components/admin/CodesTab.svelte';
 	import MapsTab from '$lib/components/admin/MapsTab.svelte';
 	import ChannelTab from '$lib/components/admin/ChannelTab.svelte';
+	import AnalyticsTab from '$lib/components/admin/AnalyticsTab.svelte';
 
 	let { data }: { data: PageData } = $props();
 
-	// Control de navegación entre las 5 funciones
-	type TabType = 'leaderboard' | 'market' | 'codes' | 'maps' | 'channel';
+	// Control de navegación entre las funciones
+	type TabType = 'leaderboard' | 'market' | 'codes' | 'maps' | 'channel' | 'analytics';
 	let currentTab = $state<TabType>('leaderboard');
 
 	// Feedback global y toasts
@@ -179,10 +181,15 @@
 				onCharacterCreated={handleCharacterCreated}
 				{showMessage}
 			/>
+		{:else if currentTab === 'analytics'}
+			<AnalyticsTab
+				slug={data.event.slug}
+				{showMessage}
+			/>
 		{/if}
 	</main>
 
-	<!-- NAVEGACIÓN INFERIOR (5 FUNCIONES) -->
+	<!-- NAVEGACIÓN INFERIOR (6 FUNCIONES) -->
 	<nav class="gm-bottom-nav" aria-label="Navegación del Game Master">
 		<button
 			class="nav-item {currentTab === 'leaderboard' ? 'active' : ''}"
@@ -222,6 +229,14 @@
 		>
 			<Radio size={20} />
 			<span>Canal</span>
+		</button>
+
+		<button
+			class="nav-item {currentTab === 'analytics' ? 'active' : ''}"
+			onclick={() => (currentTab = 'analytics')}
+		>
+			<BarChart3 size={20} />
+			<span>Analíticas</span>
 		</button>
 	</nav>
 </div>

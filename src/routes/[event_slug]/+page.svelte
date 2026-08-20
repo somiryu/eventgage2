@@ -125,6 +125,9 @@
 		if (entry.type === 'ai_prompt_highlight') {
 			return `✨ ${entry.payload?.playerName || 'Un agente'} recibió una evaluación destacada de GIOCCHI en "${entry.payload?.missionTitle}".`;
 		}
+		if (entry.type === 'treaty_signed') {
+			return `🏛️ ${entry.payload?.playerName || 'Un agente'} firmó el Tratado Huizinga.`;
+		}
 		if (entry.type === 'gm_alert') {
 			return entry.payload?.message || 'Transmisión del Game Master.';
 		}
@@ -295,6 +298,7 @@
 		userInput: string;
 		feedback: string;
 		xpAwarded: number;
+		hasUnlockedCommunication?: boolean;
 	} | null>(null);
 
 	// Cuenta regresiva y cancelación para retos de IA (GIOCCHI)
@@ -1121,9 +1125,24 @@
 
 	const activeCommunications = $derived.by<CommunicationItem[]>(() => {
 		const list: CommunicationItem[] = [];
+		const charMap = new Map((data.characters || []).map((c: any) => [c.id, c]));
 
-		// 1. Directiva Táctica de Cipher (Feedback contextual de misiones):
-		if (cipherPersistentMessage) {
+		// 1. Directivas de campo / Comunicaciones dinámicas desbloqueadas por misiones (unlock_communication):
+		const unlockedComms = (player?.game_status?.unlocked_communications || []) as any[];
+		for (const comm of unlockedComms) {
+			const char = comm.character_id ? charMap.get(comm.character_id) : null;
+			list.push({
+				id: comm.id,
+				speaker_name: char?.name || 'Operador Cipher',
+				portrait_url: char?.portrait_url || '/images/gamescon/characters/char_cipher.jpg',
+				badge: comm.badge || 'DIRECTIVA DE CAMPO',
+				badge_type: comm.badge_type || 'tactical',
+				text: comm.text
+			});
+		}
+
+		// 2. Directiva Táctica Base de Cipher (Tutorial / Fallback si no hay directivas de campo activas):
+		if (list.length === 0 && cipherPersistentMessage) {
 			list.push({
 				id: 'cipher_tactical_directive',
 				speaker_name: 'Operador Cipher',
@@ -1134,7 +1153,7 @@
 			});
 		}
 
-		// 2. Diálogos de Historia / Transmisiones de Personajes (desde bem.eventgage_event_dialogues):
+		// 3. Diálogos de Historia / Transmisiones de Personajes (desde bem.eventgage_event_dialogues):
 		const validDbDialogues = (data.dialogues || []).filter((d: any) => d.id !== 'dialogue_welcome');
 		for (const d of validDbDialogues) {
 			list.push({
@@ -1395,7 +1414,8 @@
 						missionTitle: selectedMission.title,
 						userInput: payload.answerText || aiPromptText,
 						feedback: resData.feedback,
-						xpAwarded: resData.xpAwarded || 25
+						xpAwarded: resData.xpAwarded || 25,
+						hasUnlockedCommunication: !!selectedMission?.mechanic?.unlock_communication
 					};
 					selectedMission = null;
 					playSuccess();
@@ -1436,6 +1456,7 @@
 		const currentMissionTitle = selectedMission.title;
 		const currentMissionId = selectedMission.id;
 		const currentAnswer = aiPromptText;
+		const missionHasComm = !!selectedMission?.mechanic?.unlock_communication;
 
 		if (aiAbortController) {
 			aiAbortController.abort();
@@ -1467,7 +1488,8 @@
 					missionTitle: currentMissionTitle,
 					userInput: currentAnswer,
 					feedback: resData.feedback,
-					xpAwarded: resData.xpAwarded || 25
+					xpAwarded: resData.xpAwarded || 25,
+					hasUnlockedCommunication: missionHasComm
 				};
 				selectedMission = null;
 				playSuccess();
@@ -3234,6 +3256,14 @@
 
 						{#if missionResult && selectedMission.type !== 'ai_prompt_challenge' && (selectedMission.type !== 'dice_check' || diceRollPhase === 'consequences')}
 							<div class="code-feedback {missionResult.success ? 'success' : 'error'}">{missionResult.message}</div>
+							{#if missionResult.success && selectedMission?.mechanic?.unlock_communication}
+								<div class="unlocked-comm-banner">
+									<svg class="comm-banner-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+									</svg>
+									<span>Revisa la comunicación entrante en el HUD para continuar.</span>
+								</div>
+							{/if}
 						{:else if missionResult && !missionResult.success}
 							<div class="code-feedback error">{missionResult.message}</div>
 						{/if}
@@ -3293,8 +3323,20 @@
 						</div>
 
 						<div class="giocchi-popup-footer-notice">
-							<span>✓ Entrada archivada permanentemente en tu Bitácora (Pestaña Perfil)</span>
+							<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"></polyline>
+							</svg>
+							<span>Entrada archivada permanentemente en tu Bitácora (Pestaña Perfil)</span>
 						</div>
+
+						{#if giocchiModalData.hasUnlockedCommunication}
+							<div class="giocchi-popup-comm-notice">
+								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+								</svg>
+								<span>Revisa la comunicación entrante en el HUD para continuar.</span>
+							</div>
+						{/if}
 					</div>
 
 					<button
@@ -5223,11 +5265,48 @@
 		margin: 0;
 	}
 	.giocchi-popup-footer-notice {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
 		padding-top: 0.75rem;
 		border-top: 1px solid rgba(255, 255, 255, 0.08);
 		font-size: 0.76rem;
 		color: #a78bfa;
 		text-align: left;
+	}
+	.giocchi-popup-comm-notice {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.6rem 0.75rem;
+		background: rgba(16, 185, 129, 0.12);
+		border: 1px solid rgba(16, 185, 129, 0.3);
+		border-radius: var(--radius-sm);
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: #34d399;
+		text-align: left;
+	}
+	.giocchi-popup-comm-notice svg {
+		flex-shrink: 0;
+	}
+	.unlocked-comm-banner {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.65rem 0.85rem;
+		background: rgba(16, 185, 129, 0.12);
+		border: 1px solid rgba(16, 185, 129, 0.35);
+		border-radius: var(--radius-md);
+		color: #34d399;
+		font-size: 0.85rem;
+		font-weight: 600;
+		margin-top: 0.65rem;
+		text-align: left;
+	}
+	.unlocked-comm-banner svg {
+		flex-shrink: 0;
+		color: #34d399;
 	}
 	.giocchi-popup-close-btn {
 		width: 100%;

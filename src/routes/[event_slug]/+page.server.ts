@@ -15,6 +15,7 @@ import {
 	checkExpiredTimeBombs,
 	getEventActivityFeed,
 	getEventLevels,
+	getAdminCharacters,
 	SystemUnavailableError
 } from '$lib/server/eventService';
 import { parseSignedSession } from '$lib/server/session';
@@ -28,14 +29,12 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 	const sessionCookie = cookies.get('eventgage_session');
 	const user = parseSignedSession<{ id: string; email: string; full_name: string }>(sessionCookie);
 
-	// 1. Si no está registrado o autenticado o la firma no es válida, redirigir al registro
 	if (!user) {
-		cookies.delete('eventgage_session', { path: '/' });
-		throw redirect(303, `/register?event=${params.event_slug}`);
+		throw redirect(302, `/login?redirect=/${params.event_slug}`);
 	}
 
 	try {
-		// 2. Obtener información del evento
+		// 1. Obtener evento por slug
 		const event = await getEventBySlug(params.event_slug);
 		if (!event) {
 			throw error(404, `El evento "${params.event_slug}" no existe.`);
@@ -49,6 +48,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 			maps,
 			alerts,
 			dialogues,
+			characters,
 			eventPoints,
 			rewards,
 			votingResults,
@@ -62,6 +62,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 			getEventMaps(event.id),
 			getEventAlerts(event.id),
 			getEventDialogues(event.id),
+			getAdminCharacters(event.id),
 			getEventPoints(event.id),
 			getEventRewards(event.id),
 			getVotingResults(event.id),
@@ -86,6 +87,7 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 			maps,
 			alerts,
 			dialogues,
+			characters,
 			eventPoints,
 			rewards,
 			votingResults,

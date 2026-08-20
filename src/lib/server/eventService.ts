@@ -1,6 +1,7 @@
 import { supabaseServer, supabaseRealtime } from './supabaseClient';
 import { dev } from '$app/environment';
 import { evaluateAiPromptChallenge, AI_PROMPT_FALLBACK_FEEDBACK, AI_PROMPT_FALLBACK_XP } from './giocchiService';
+import { trackAnalyticsEvent } from './analyticsService';
 
 /**
  * Sirve contenido de ejemplo SOLO en desarrollo local cuando Supabase no responde
@@ -674,6 +675,110 @@ export async function getHighRankPlayers(eventId: string) {
 	}
 }
 
+// Firma del Tratado Huizinga (GDD 11.1, punto 3). Requiere avatar/jugador ya
+// registrado — el mismo requisito narrativo que el resto de mecánicas
+// (`submitCodeForPlayer` etc.). Idempotente: firmar dos veces no es un error,
+// solo confirma que ya estaba firmado (misma convención que redeemed_codes).
+export async function signTreaty(userId: string, eventId: string) {
+	try {
+		const player = await getPlayerAvatar(userId, eventId);
+		if (!player) {
+			return { success: false, message: 'Debes registrar tu avatar en la Agencia antes de firmar el Tratado, Agente.' };
+		}
+
+		const { data: existing } = await supabaseServer
+			.from('eventgage_event_signatures')
+			.select('id')
+			.eq('event_id', eventId)
+			.eq('user_id', userId)
+			.maybeSingle();
+
+		if (existing) {
+			return { success: true, alreadySigned: true };
+		}
+
+		const { error } = await supabaseServer
+			.from('eventgage_event_signatures')
+			.insert({ event_id: eventId, user_id: userId });
+
+		if (error) {
+			console.error('[eventService] Error guardando firma del Tratado:', error);
+			return { success: false, message: 'La Agencia no pudo registrar tu firma en este intento. Vuelve a intentarlo.' };
+		}
+
+		await broadcastEventActivity(eventId, 'treaty_signed', {
+			playerName: player.avatar?.name || 'Un agente'
+		});
+
+		trackAnalyticsEvent(eventId, userId, 'treaty_signed', 'social', {
+			faction_id: player.avatar?.faction_id,
+			rank: player.avatar?.rank || 1
+		});
+
+		return { success: true, alreadySigned: false };
+	} catch (e) {
+		console.error('[eventService] Error crítico en signTreaty:', e);
+		return { success: false, message: 'La Agencia no pudo registrar tu firma en este intento. Vuelve a intentarlo.' };
+	}
+}
+
+export async function hasSignedTreaty(userId: string, eventId: string): Promise<boolean> {
+	const { data } = await supabaseServer
+		.from('eventgage_event_signatures')
+		.select('id')
+		.eq('event_id', eventId)
+		.eq('user_id', userId)
+		.maybeSingle();
+	return !!data;
+}
+
+// Lista de firmantes para el tablero de pantalla gigante, con precedencia de
+// honor: Llave PRIME (rank >= 3) o Rango Master primero, luego orden
+// cronológico de firma — mismo criterio de precedencia que getHighRankPlayers.
+export async function getTreatySignatures(eventId: string) {
+	try {
+		const [signaturesRes, avatarsRes] = await Promise.all([
+			supabaseServer
+				.from('eventgage_event_signatures')
+				.select('user_id, signed_at')
+				.eq('event_id', eventId)
+				.order('signed_at', { ascending: true }),
+			supabaseServer.from('eventgage_event_avatar').select('user_id, avatar').eq('event_id', eventId)
+		]);
+
+		if (signaturesRes.error) {
+			console.error('[eventService] Error consultando getTreatySignatures:', signaturesRes.error);
+			return { count: 0, signatures: [] };
+		}
+
+		const avatarByUser = new Map(
+			(avatarsRes.data || []).map((row: any) => [row.user_id, row.avatar || {}])
+		);
+
+		const signatures = (signaturesRes.data || []).map((sig: any) => {
+			const a: any = avatarByUser.get(sig.user_id) || {};
+			return {
+				name: a.name || 'Agente',
+				faction_id: a.faction_id || null,
+				rank: a.rank ?? 0,
+				signed_at: sig.signed_at
+			};
+		});
+
+		signatures.sort((a: any, b: any) => {
+			const aPrecedence = a.rank >= 3 ? 1 : 0;
+			const bPrecedence = b.rank >= 3 ? 1 : 0;
+			if (aPrecedence !== bPrecedence) return bPrecedence - aPrecedence;
+			return new Date(a.signed_at).getTime() - new Date(b.signed_at).getTime();
+		});
+
+		return { count: signatures.length, signatures };
+	} catch (e) {
+		console.error('[eventService] Error crítico en getTreatySignatures:', e);
+		return { count: 0, signatures: [] };
+	}
+}
+
 export async function createPlayerAvatar(
 	userId: string,
 	eventId: string,
@@ -717,6 +822,7 @@ export async function createPlayerAvatar(
 		narrative_seen: false
 	};
 
+	let dbData: any = null;
 	try {
 		const { data, error } = await supabaseServer
 			.from('eventgage_event_avatar')
@@ -733,11 +839,19 @@ export async function createPlayerAvatar(
 			.select()
 			.single();
 
-		if (data) return data;
+		if (data) dbData = data;
 		if (error) console.error('Error al insertar eventgage_event_avatar:', error);
 	} catch (e) {
 		console.warn('Fallback saving avatar memory:', e);
 	}
+
+	trackAnalyticsEvent(eventId, userId, 'player_joined', 'onboarding', {
+		avatar_id: selectedTemplate.id,
+		class_name: selectedTemplate.name,
+		faction_id: factionId,
+		gender: gender,
+		agent_name: userName
+	});
 
 	const key = `${userId}_${eventId}`;
 	const record = {
@@ -749,7 +863,7 @@ export async function createPlayerAvatar(
 		settings: { sound: true }
 	};
 	memoryStore.eventAvatars.set(key, record);
-	return record;
+	return dbData || record;
 }
 
 export async function submitCodeForPlayer(userId: string, eventId: string, codeStr: string) {
@@ -844,6 +958,10 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 		dev && (cleanCode === 'DEMO2026' || cleanCode === 'CYBER_DEMO' || cleanCode === 'DISABLE_99');
 
 	if (!matchedCodeRecord && !matchedMissionRecord && !isDemoFallbackCode) {
+		trackAnalyticsEvent(eventId, userId, 'code_failed', 'progression', {
+			code: cleanCode,
+			reason: 'invalid_or_expired'
+		});
 		return { success: false, message: 'Código inválido o expirado' };
 	}
 
@@ -852,6 +970,13 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 	}
 
 	updatedStatus.redeemed_codes.push(cleanCode);
+
+	// Auto-limpieza: remueve directivas de campo cuyo remove_on_code coincide con el código canjeado
+	if (Array.isArray(updatedStatus.unlocked_communications)) {
+		updatedStatus.unlocked_communications = updatedStatus.unlocked_communications.filter(
+			(comm: any) => !comm.remove_on_code || comm.remove_on_code.trim().toUpperCase() !== cleanCode
+		);
+	}
 
 	// Procesar recompensas dinámicas
 	let xpReward = 150;
@@ -985,6 +1110,36 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 		console.warn('Updated player in memory:', e);
 	}
 
+	trackAnalyticsEvent(eventId, userId, 'code_redeemed', 'progression', {
+		code: cleanCode,
+		category: matchedCodeRecord?.category || (matchedMissionRecord ? 'mission' : 'demo'),
+		display_id: matchedCodeRecord?.display_id || matchedMissionRecord?.id,
+		xp_awarded: xpReward,
+		cp_awarded: cpReward,
+		newly_unlocked_missions: newlyUnlockedMissionIds,
+		newly_unlocked_items: newlyUnlockedItemIds
+	});
+
+	if (matchedMissionRecord) {
+		trackAnalyticsEvent(eventId, userId, 'mission_completed', 'progression', {
+			mission_id: matchedMissionRecord.id,
+			mission_type: matchedMissionRecord.mission_type || matchedMissionRecord.type || 'code',
+			xp_awarded: xpReward,
+			cp_awarded: cpReward
+		});
+	}
+
+	if (milestonesReached.length > 0) {
+		for (const m of milestonesReached) {
+			trackAnalyticsEvent(eventId, userId, 'milestone_reached', 'progression', {
+				count: m.count,
+				rank: m.rank,
+				rank_title: m.rankTitle,
+				sp_bonus: m.spBonus
+			});
+		}
+	}
+
 	const key = `${userId}_${eventId}`;
 	memoryStore.eventAvatars.set(key, player);
 
@@ -1059,6 +1214,15 @@ export async function purchaseReward(userId: string, eventId: string, rewardId: 
 	player.avatar = avatar;
 	player.game_status = status;
 	await persistPlayerState(userId, eventId, player);
+
+	trackAnalyticsEvent(eventId, userId, 'reward_purchased', 'economy', {
+		reward_id: reward.id,
+		reward_name: reward.name,
+		category: reward.category,
+		cost_cp: reward.cost,
+		token_generated: status.vip_token || null,
+		min_level: requiredLevel
+	});
 
 	return attachWorldState(eventId, {
 		success: true,
@@ -1219,6 +1383,22 @@ export async function submitVoteForPlayer(userId: string, eventId: string, missi
 		console.warn('Updated vote status in memory:', e);
 	}
 
+	trackAnalyticsEvent(eventId, userId, 'vote_submitted', 'social', {
+		mission_id: missionId,
+		option_id: optionId,
+		faction_id: updatedAvatar.faction_id,
+		is_first_vote: isFirstVote
+	});
+
+	if (isFirstVote) {
+		trackAnalyticsEvent(eventId, userId, 'mission_completed', 'progression', {
+			mission_id: missionId,
+			mission_type: 'collective_vote',
+			xp_awarded: xpReward,
+			cp_awarded: cpReward
+		});
+	}
+
 	const key = `${userId}_${eventId}`;
 	memoryStore.eventAvatars.set(key, player);
 
@@ -1263,6 +1443,8 @@ function normalizeGameStatus(gameStatus: any) {
 		expired_missions: [],
 		// Juego de Contactos (sección 2.18): libreta de contactos cruzados.
 		saved_contacts: [],
+		// Comunicaciones desbloqueables por misión (unlock_communication):
+		unlocked_communications: [],
 		...(gameStatus || {})
 	};
 	if (!status.journal) status.journal = [];
@@ -1277,6 +1459,7 @@ function normalizeGameStatus(gameStatus: any) {
 	if (!status.mission_timers) status.mission_timers = {};
 	if (!status.expired_missions) status.expired_missions = [];
 	if (!status.saved_contacts) status.saved_contacts = [];
+	if (!status.unlocked_communications) status.unlocked_communications = [];
 	return status;
 }
 
@@ -1320,6 +1503,10 @@ export async function checkExpiredTimeBombs(eventId: string, player: any): Promi
 			status.expired_missions.push(id);
 			await adjustWorldPoints(eventId, 2);
 			changed = true;
+			trackAnalyticsEvent(eventId, player.user_id, 'time_bomb_expired', 'mechanic', {
+				mission_id: id,
+				penalty_points: 2
+			});
 		}
 	}
 
@@ -1749,12 +1936,33 @@ async function applyMissionCompletion(
 		}
 	}
 
+	if (mission.mechanic?.unlock_communication) {
+		const uComm = mission.mechanic.unlock_communication;
+		const commId = uComm.id || `comm_${mission.id}`;
+		if (!Array.isArray(status.unlocked_communications)) {
+			status.unlocked_communications = [];
+		}
+		if (!status.unlocked_communications.some((c: any) => c.id === commId)) {
+			status.unlocked_communications.unshift({
+				id: commId,
+				character_id: uComm.character_id || 'char_cipher',
+				badge: uComm.badge || 'DIRECTIVA DE CAMPO',
+				badge_type: uComm.badge_type || 'tactical',
+				text: uComm.text || '',
+				remove_on_code: uComm.remove_on_code || null,
+				unlocked_at: new Date().toISOString()
+			});
+		}
+	}
+
 	const [milestoneList, eventLevels] = await Promise.all([
 		getEventMilestones(eventId),
 		getEventLevels(eventId)
 	]);
 	const milestonesReached = checkAndApplyMilestones(avatar, status, milestoneList);
-	avatar.xp.level = calculateLevel(avatar.xp.points, eventLevels);
+	const oldLevel = player.avatar?.xp?.level || 1;
+	const newLevel = calculateLevel(avatar.xp.points, eventLevels);
+	avatar.xp.level = newLevel;
 
 	player.avatar = avatar;
 	player.game_status = status;
@@ -1764,7 +1972,31 @@ async function applyMissionCompletion(
 	}
 	if (milestonesReached.length > 0) {
 		await broadcastMilestoneReached(eventId, avatar.name, milestonesReached);
+		for (const m of milestonesReached) {
+			trackAnalyticsEvent(eventId, userId, 'milestone_reached', 'progression', {
+				count: m.count,
+				rank: m.rank,
+				rank_title: m.rankTitle,
+				sp_bonus: m.spBonus
+			});
+		}
 	}
+
+	if (newLevel !== oldLevel) {
+		trackAnalyticsEvent(eventId, userId, 'level_up', 'progression', {
+			old_level: oldLevel,
+			new_level: newLevel,
+			total_xp: avatar.xp.points
+		});
+	}
+
+	trackAnalyticsEvent(eventId, userId, 'mission_completed', 'progression', {
+		mission_id: mission.id,
+		mission_type: mission.mission_type,
+		xp_awarded: xpReward,
+		cp_awarded: cpReward
+	});
+
 	return milestonesReached;
 }
 
@@ -1819,8 +2051,30 @@ async function resolveDiceCheck(userId: string, eventId: string, player: any, st
 	// mismo número con signo invertido).
 	await adjustWorldPoints(eventId, checkSuccess ? -1 : 1);
 
+	trackAnalyticsEvent(eventId, userId, 'dice_check_rolled', 'mechanic', {
+		mission_id: mission.id,
+		attribute,
+		roll,
+		modifier,
+		total,
+		dc,
+		success: checkSuccess,
+		sp_boost_applied: spBoostApplied
+	});
+
+	if (!checkSuccess) {
+		trackAnalyticsEvent(eventId, userId, 'mission_failed', 'progression', {
+			mission_id: mission.id,
+			mission_type: 'dice_check',
+			reason: 'dc_not_met',
+			total,
+			dc
+		});
+	}
+
 	const boostNote = spBoostApplied ? ' (con Sobrecarga de Atributo: +2 SP)' : '';
-	const baseMsg = `🎲 Tirada: ${roll} + ${modifier} (${attribute}) = ${total} vs DC ${dc}${boostNote}. ${checkSuccess ? '¡Éxito! Tu facción avanza.' : 'Fallo — la Inercia se resiste, pero el intento cuenta.'} +${xpReward} XP, +${cpReward} 💠.`;
+	const commNote = mission.mechanic?.unlock_communication ? ' Revisa la comunicación entrante en el HUD para continuar.' : '';
+	const baseMsg = `🎲 Tirada: ${roll} + ${modifier} (${attribute}) = ${total} vs DC ${dc}${boostNote}. ${checkSuccess ? '¡Éxito! Tu facción avanza.' : 'Fallo — la Inercia se resiste, pero el intento cuenta.'} +${xpReward} XP, +${cpReward} 💠.${commNote}`;
 
 	return {
 		success: true,
@@ -1888,6 +2142,19 @@ export async function retryDiceCheck(userId: string, eventId: string, missionId:
 	player.game_status = status;
 	await persistPlayerState(userId, eventId, player);
 
+	trackAnalyticsEvent(eventId, userId, 'dice_retry_used', 'economy', { mission_id: missionId });
+	trackAnalyticsEvent(eventId, userId, 'dice_check_rolled', 'mechanic', {
+		mission_id: mission.id,
+		attribute,
+		roll,
+		modifier,
+		total,
+		dc,
+		success: checkSuccess,
+		sp_boost_applied: spBoostApplied,
+		is_retry: true
+	});
+
 	const boostNote = spBoostApplied ? ' (con Sobrecarga de Atributo: +2 SP)' : '';
 	const baseMsg = `🎲 Reintento: ${roll} + ${modifier} (${attribute}) = ${total} vs DC ${dc}${boostNote}.${factionMsg}`;
 
@@ -1925,6 +2192,8 @@ export async function activateSpBoost(userId: string, eventId: string) {
 	status.sp_boost_charges = 3;
 	player.game_status = status;
 	await persistPlayerState(userId, eventId, player);
+
+	trackAnalyticsEvent(eventId, userId, 'sp_boost_activated', 'economy', { charges_added: 3 });
 
 	return {
 		success: true,
@@ -1985,6 +2254,11 @@ export async function activateContactProfile(
 
 	player.avatar = updatedAvatar;
 	await persistPlayerState(userId, eventId, player);
+
+	trackAnalyticsEvent(eventId, userId, 'contact_profile_activated', 'social', {
+		personal_code: personalCode,
+		company: fields.company || ''
+	});
 
 	return attachWorldState(eventId, {
 		success: true,
@@ -2095,6 +2369,12 @@ async function redeemContactCode(userId: string, eventId: string, rawCode: strin
 		cpAwarded
 	});
 
+	trackAnalyticsEvent(eventId, userId, 'contact_scanned', 'social', {
+		target_user_id: targetRow.user_id,
+		scanner_faction_id: myAvatar.faction_id,
+		target_faction_id: targetAvatar.faction_id
+	});
+
 	return attachWorldState(eventId, {
 		success: true,
 		message: `¡Contacto agregado: ${targetAvatar.name || 'Agente'}! +${xpAwarded} XP, +3 pts de Facción.`,
@@ -2129,9 +2409,24 @@ async function resolveTriviaQuiz(userId: string, eventId: string, player: any, s
 	// SIGUE sumando a la Inercia, no es un espejo del delta de facción.
 	await adjustWorldPoints(eventId, correct ? -1 : 1);
 
-	const baseMsg = correct
+	const commNote = mission.mechanic?.unlock_communication ? ' Revisa la comunicación entrante en el HUD para continuar.' : '';
+	const baseMsg = (correct
 		? `¡Correcto! Desmontaste el mito. +${xpReward} XP, +${cpReward} 💠.`
-		: `No era esa — pero el intento también cuenta. +${xpReward} XP, +${cpReward} 💠.`;
+		: `No era esa — pero el intento también cuenta. +${xpReward} XP, +${cpReward} 💠.`) + commNote;
+
+	trackAnalyticsEvent(eventId, userId, 'trivia_answered', 'mechanic', {
+		mission_id: mission.id,
+		option_id: optionId,
+		is_correct: correct
+	});
+
+	if (!correct) {
+		trackAnalyticsEvent(eventId, userId, 'mission_failed', 'progression', {
+			mission_id: mission.id,
+			mission_type: 'trivia_quiz',
+			reason: 'wrong_answer'
+		});
+	}
 
 	return {
 		success: true,
@@ -2206,9 +2501,17 @@ async function resolveAiPromptChallenge(userId: string, eventId: string, player:
 		});
 	}
 
-	const baseMsg = evaluation.isFallback
+	trackAnalyticsEvent(eventId, userId, 'ai_prompt_evaluated', 'mechanic', {
+		mission_id: mission.id,
+		score_xp: evaluation.xp_awarded,
+		is_fallback: evaluation.isFallback,
+		response_length: trimmed.length
+	});
+
+	const aiCommNote = mission.mechanic?.unlock_communication ? ' Revisa la comunicación entrante en el HUD para continuar.' : '';
+	const baseMsg = (evaluation.isFallback
 		? `GIOCCHI registró tu reflexión en la Bitácora (modo offline / respuesta rápida). +${xpTotal} XP, +${cpReward} 💠.`
-		: `GIOCCHI evaluó tu reflexión (+${evaluation.xp_awarded} XP por pertinencia). +${xpTotal} XP total, +${cpReward} 💠.`;
+		: `GIOCCHI evaluó tu reflexión (+${evaluation.xp_awarded} XP por pertinencia). +${xpTotal} XP total, +${cpReward} 💠.`) + aiCommNote;
 
 	return {
 		success: true,
@@ -2271,6 +2574,9 @@ export async function markNarrativeSeen(userId: string, eventId: string) {
 	status.narrative_seen = true;
 	player.game_status = status;
 	await persistPlayerState(userId, eventId, player);
+
+	trackAnalyticsEvent(eventId, userId, 'narrative_completed', 'onboarding', {});
+
 	return { success: true, playerState: player };
 }
 

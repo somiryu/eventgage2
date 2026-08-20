@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
+import { dev } from '$app/environment';
 import { supabaseServer } from '$lib/server/supabaseClient';
 import { createSignedSession } from '$lib/server/session';
 
@@ -41,27 +42,37 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 		// 1. Crear usuario en Supabase Auth directamente como administrador con email pre-confirmado
 		// (email_confirm: true garantiza que Supabase NO despache correos de confirmación ni use cuotas SMTP)
-		const { data: adminData, error: adminError } = await supabaseServer.auth.admin.createUser({
-			email: cleanEmail,
-			password: password,
-			email_confirm: true,
-			user_metadata: { full_name: full_name || 'Agente' }
-		});
+		let userId: string | null = null;
+		try {
+			const { data: adminData, error: adminError } = await supabaseServer.auth.admin.createUser({
+				email: cleanEmail,
+				password: password,
+				email_confirm: true,
+				user_metadata: { full_name: full_name || 'Agente' }
+			});
 
-		if (adminError) {
-			console.warn('[register] admin.createUser error:', adminError.message);
-			if (adminError.message.toLowerCase().includes('already registered') || adminError.message.toLowerCase().includes('already exists')) {
-				return json({ error: 'Ya existe una credencial de Agente con ese correo. Si es tuya, usa "Iniciar Sesión".' }, { status: 400 });
+			if (adminError) {
+				console.warn('[register] admin.createUser error:', adminError.message);
+				if (adminError.message.toLowerCase().includes('already registered') || adminError.message.toLowerCase().includes('already exists')) {
+					return json({ error: 'Ya existe una credencial de Agente con ese correo. Si es tuya, usa "Iniciar Sesión".' }, { status: 400 });
+				}
+				if (!dev) {
+					return json({ error: agencyAuthErrorMessage(adminError.message) }, { status: 400 });
+				}
+			} else if (adminData?.user) {
+				userId = adminData.user.id;
 			}
-			return json({ error: agencyAuthErrorMessage(adminError.message) }, { status: 400 });
+		} catch (authErr) {
+			console.warn('[register] Supabase auth error in dev fallback:', authErr);
 		}
 
-		const authUser = adminData?.user;
-		if (!authUser) {
-			return json({ error: 'La Agencia no pudo abrir tu expediente en este intento. Vuelve a intentarlo en unos segundos.' }, { status: 400 });
+		if (!userId) {
+			if (dev) {
+				userId = crypto.randomUUID();
+			} else {
+				return json({ error: 'La Agencia no pudo abrir tu expediente en este intento. Vuelve a intentarlo en unos segundos.' }, { status: 400 });
+			}
 		}
-
-		const userId = authUser.id;
 
 		// 2. Garantizar perfil en bem.eventgage_user
 		const { data: userProfile, error: dbError } = await supabaseServer

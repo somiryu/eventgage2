@@ -609,4 +609,312 @@ test('Game Mechanics: Configurable Event Milestones & Narrative Triggers', async
 	});
 });
 
+// --- 9. BEHAVIORAL ANALYTICS & REPORTING ENGINE ---
+test('Analytics Engine: Behavioral Tracking, Hourly Velocity & CSV Reports', async (t) => {
+	// Mock analytics store for testing aggregations
+	const mockEventId = 'evt-gamescon-2026';
+	const sampleEvents = [
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'player_joined',
+			category: 'onboarding',
+			payload: { avatar_id: 'avatar_disenador', faction_id: 'fac_aprendizaje_activo' },
+			created_at: '2026-08-20T10:05:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_02',
+			event_name: 'player_joined',
+			category: 'onboarding',
+			payload: { avatar_id: 'avatar_arquitecto', faction_id: 'fac_impacto_valor' },
+			created_at: '2026-08-20T10:15:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'code_redeemed',
+			category: 'progression',
+			payload: { code: 'REC-01', display_id: 'REC-01', xp_awarded: 150, cp_awarded: 50 },
+			created_at: '2026-08-20T10:20:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'mission_completed',
+			category: 'progression',
+			payload: { mission_id: 'm_code_01', mission_type: 'code', xp_awarded: 150, cp_awarded: 50 },
+			created_at: '2026-08-20T10:20:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'dice_check_rolled',
+			category: 'mechanic',
+			payload: { mission_id: 'm_dice_01', roll: 16, modifier: 7, total: 23, dc: 12, success: true },
+			created_at: '2026-08-20T11:05:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'mission_completed',
+			category: 'progression',
+			payload: { mission_id: 'm_dice_01', mission_type: 'dice_check', xp_awarded: 50, cp_awarded: 1 },
+			created_at: '2026-08-20T11:05:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_02',
+			event_name: 'trivia_answered',
+			category: 'mechanic',
+			payload: { mission_id: 'm_trivia_01', is_correct: true },
+			created_at: '2026-08-20T11:15:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_02',
+			event_name: 'mission_completed',
+			category: 'progression',
+			payload: { mission_id: 'm_trivia_01', mission_type: 'trivia_quiz', xp_awarded: 50, cp_awarded: 1 },
+			created_at: '2026-08-20T11:15:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'contact_profile_activated',
+			category: 'social',
+			payload: { personal_code: '@X7K9M2', company: 'Agencia Huizinga' },
+			created_at: '2026-08-20T11:30:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'contact_scanned',
+			category: 'social',
+			payload: { target_user_id: 'usr_02', scanner_faction_id: 'fac_aprendizaje_activo', target_faction_id: 'fac_impacto_valor' },
+			created_at: '2026-08-20T11:35:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'reward_purchased',
+			category: 'economy',
+			payload: { reward_id: 'rew_prime_vip_consultancy', reward_name: 'Pase VIP', category: 'vip_lead', cost_cp: 2, token_generated: 'PRIME-VIP-A1B2C3D4' },
+			created_at: '2026-08-20T12:10:00Z'
+		},
+		{
+			event_id: mockEventId,
+			user_id: 'usr_01',
+			event_name: 'treaty_signed',
+			category: 'social',
+			payload: { faction_id: 'fac_aprendizaje_activo', rank: 2 },
+			created_at: '2026-08-20T12:45:00Z'
+		}
+	];
+
+	function computeHourlyMissions(events) {
+		const missionEvents = events.filter((e) => e.event_name === 'mission_completed');
+		const map = new Map();
+		for (const ev of missionEvents) {
+			const d = new Date(ev.created_at);
+			const hourKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}T${String(d.getUTCHours()).padStart(2, '0')}:00`;
+			const type = ev.payload?.mission_type || 'unknown';
+			if (!map.has(hourKey)) map.set(hourKey, { count: 0, types: {} });
+			const b = map.get(hourKey);
+			b.count++;
+			b.types[type] = (b.types[type] || 0) + 1;
+		}
+		return Array.from(map.entries()).map(([key, val]) => ({
+			hourKey: key,
+			count: val.count,
+			types: val.types
+		}));
+	}
+
+	function computeOverview(events) {
+		const uniqueUsers = new Set();
+		let playersJoined = 0;
+		let missionsCompleted = 0;
+		let codesRedeemed = 0;
+		let contactsScanned = 0;
+		let rewardsPurchased = 0;
+		let treatiesSigned = 0;
+
+		for (const ev of events) {
+			if (ev.user_id) uniqueUsers.add(ev.user_id);
+			if (ev.event_name === 'player_joined') playersJoined++;
+			if (ev.event_name === 'mission_completed') missionsCompleted++;
+			if (ev.event_name === 'code_redeemed') codesRedeemed++;
+			if (ev.event_name === 'contact_scanned') contactsScanned++;
+			if (ev.event_name === 'reward_purchased') rewardsPurchased++;
+			if (ev.event_name === 'treaty_signed') treatiesSigned++;
+		}
+
+		return {
+			totalEvents: events.length,
+			uniqueUsersCount: uniqueUsers.size,
+			playersJoined,
+			missionsCompleted,
+			codesRedeemed,
+			contactsScanned,
+			rewardsPurchased,
+			treatiesSigned
+		};
+	}
+
+	function generateCSV(overview, eventId) {
+		const rows = [
+			['Metrica', 'Valor'],
+			['Event_ID', eventId],
+			['Total_Eventos', overview.totalEvents],
+			['Usuarios_Unicos', overview.uniqueUsersCount],
+			['Agentes_Creados', overview.playersJoined],
+			['Misiones_Completadas', overview.missionsCompleted],
+			['Contactos_Intercambiados', overview.contactsScanned],
+			['Canjes_Boveda', overview.rewardsPurchased],
+			['Tratados_Firmados', overview.treatiesSigned]
+		];
+		return rows.map((r) => r.join(',')).join('\n');
+	}
+
+	await t.test('debe agrupar misiones completadas en bloques horarios con desglose de mecánicas', () => {
+		const hourly = computeHourlyMissions(sampleEvents);
+		assert.equal(hourly.length, 2, 'Debe haber 2 franjas horarias (10:00 y 11:00 UTC)');
+
+		const h10 = hourly.find((h) => h.hourKey.includes('10:00'));
+		assert.ok(h10);
+		assert.equal(h10.count, 1);
+		assert.equal(h10.types.code, 1);
+
+		const h11 = hourly.find((h) => h.hourKey.includes('11:00'));
+		assert.ok(h11);
+		assert.equal(h11.count, 2);
+		assert.equal(h11.types.dice_check, 1);
+		assert.equal(h11.types.trivia_quiz, 1);
+	});
+
+	await t.test('debe calcular métricas consolidadas de engagement y comportamiento humano', () => {
+		const overview = computeOverview(sampleEvents);
+		assert.equal(overview.totalEvents, 12);
+		assert.equal(overview.uniqueUsersCount, 2);
+		assert.equal(overview.playersJoined, 2);
+		assert.equal(overview.missionsCompleted, 3);
+		assert.equal(overview.codesRedeemed, 1);
+		assert.equal(overview.contactsScanned, 1);
+		assert.equal(overview.rewardsPurchased, 1);
+		assert.equal(overview.treatiesSigned, 1);
+	});
+
+	await t.test('debe generar reporte CSV válido y bien formateado para descarga', () => {
+		const overview = computeOverview(sampleEvents);
+		const csv = generateCSV(overview, mockEventId);
+		assert.ok(csv.includes('Metrica,Valor'));
+		assert.ok(csv.includes('Event_ID,evt-gamescon-2026'));
+		assert.ok(csv.includes('Misiones_Completadas,3'));
+		assert.ok(csv.includes('Contactos_Intercambiados,1'));
+		assert.ok(csv.includes('Tratados_Firmados,1'));
+	});
+});
+
+// --- 10. TESTS DE COMUNICACIONES DESBLOQUEABLES POR MISIÓN & REMOVE_ON_CODE ---
+test('Game Mechanics: Mission Unlockable Communications & remove_on_code Lifecycle', async (t) => {
+	const player = {
+		avatar: { name: 'Agente S', xp: { points: 0, level: 1 } },
+		game_status: {
+			unlocked_communications: [],
+			completed_missions: [],
+			redeemed_codes: []
+		}
+	};
+
+	function completeMissionWithComm(mission) {
+		if (mission.mechanic?.unlock_communication) {
+			const uComm = mission.mechanic.unlock_communication;
+			const commId = uComm.id || `comm_${mission.id}`;
+			if (!player.game_status.unlocked_communications.some((c) => c.id === commId)) {
+				player.game_status.unlocked_communications.unshift({
+					id: commId,
+					character_id: uComm.character_id || 'char_cipher',
+					badge: uComm.badge || 'DIRECTIVA DE CAMPO',
+					badge_type: uComm.badge_type || 'tactical',
+					text: uComm.text,
+					remove_on_code: uComm.remove_on_code || null,
+					unlocked_at: new Date().toISOString()
+				});
+			}
+		}
+		player.game_status.completed_missions.push(mission.id);
+	}
+
+	function redeemCode(cleanCode) {
+		player.game_status.redeemed_codes.push(cleanCode);
+		if (Array.isArray(player.game_status.unlocked_communications)) {
+			player.game_status.unlocked_communications = player.game_status.unlocked_communications.filter(
+				(comm) => !comm.remove_on_code || comm.remove_on_code.trim().toUpperCase() !== cleanCode
+			);
+		}
+	}
+
+	await t.test('debe apilar múltiples comunicaciones en modo lista (Newest First) sin sobrescribirlas', () => {
+		completeMissionWithComm({
+			id: 'rec_calibracion',
+			mechanic: {
+				unlock_communication: {
+					id: 'comm_rec_calibracion',
+					character_id: 'char_cipher',
+					text: 'Directiva GM-01',
+					remove_on_code: 'G1P8'
+				}
+			}
+		});
+		assert.equal(player.game_status.unlocked_communications.length, 1);
+		assert.equal(player.game_status.unlocked_communications[0].id, 'comm_rec_calibracion');
+
+		completeMissionWithComm({
+			id: 'rec_feedback_loop',
+			mechanic: {
+				unlock_communication: {
+					id: 'comm_rec_feedback_loop',
+					character_id: 'char_cipher',
+					text: 'Directiva GM-15',
+					remove_on_code: 'G5DS'
+				}
+			}
+		});
+		assert.equal(player.game_status.unlocked_communications.length, 2, 'Deben coexistir 2 comunicaciones');
+		assert.equal(player.game_status.unlocked_communications[0].id, 'comm_rec_feedback_loop', 'La más reciente debe estar arriba');
+		assert.equal(player.game_status.unlocked_communications[1].id, 'comm_rec_calibracion');
+
+		completeMissionWithComm({
+			id: 'rec_fail_smart',
+			mechanic: {
+				unlock_communication: {
+					id: 'comm_rec_fail_smart',
+					character_id: 'char_cipher',
+					text: 'Directiva GM-02',
+					remove_on_code: 'G1TB'
+				}
+			}
+		});
+		assert.equal(player.game_status.unlocked_communications.length, 3, 'Deben coexistir 3 comunicaciones');
+		assert.equal(player.game_status.unlocked_communications[0].id, 'comm_rec_fail_smart');
+	});
+
+	await t.test('al canjear el código remove_on_code debe eliminar sólo la directiva correspondiente', () => {
+		redeemCode('G1P8'); // Código de GM-01
+		assert.equal(player.game_status.unlocked_communications.length, 2, 'Debe quedar con 2 comunicaciones');
+		assert.ok(!player.game_status.unlocked_communications.some((c) => c.id === 'comm_rec_calibracion'), 'comm_rec_calibracion debió ser eliminada');
+		assert.ok(player.game_status.unlocked_communications.some((c) => c.id === 'comm_rec_feedback_loop'), 'comm_rec_feedback_loop debe permanecer');
+		assert.ok(player.game_status.unlocked_communications.some((c) => c.id === 'comm_rec_fail_smart'), 'comm_rec_fail_smart debe permanecer');
+	});
+
+	await t.test('al canjear otro código remove_on_code debe eliminar la siguiente directiva', () => {
+		redeemCode('G1TB'); // Código de GM-02
+		assert.equal(player.game_status.unlocked_communications.length, 1, 'Debe quedar con 1 comunicación');
+		assert.equal(player.game_status.unlocked_communications[0].id, 'comm_rec_feedback_loop');
+	});
+});
+
+
+
 

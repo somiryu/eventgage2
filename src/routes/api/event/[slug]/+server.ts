@@ -18,6 +18,7 @@ import {
 	retryDiceCheck,
 	activateSpBoost,
 	activateContactProfile,
+	signTreaty,
 	SystemUnavailableError,
 	SYSTEM_ERROR_MESSAGE
 } from '$lib/server/eventService';
@@ -145,6 +146,11 @@ export const POST: RequestHandler = async ({ params, request, cookies }) => {
 		if (action === 'activate_contact_profile') {
 			const { company, phone, linkedin, bio } = body;
 			const result = await activateContactProfile(user.id, event.id, user.email, { company, phone, linkedin, bio });
+			return json(result);
+		}
+
+		if (action === 'sign_treaty') {
+			const result = await signTreaty(user.id, event.id);
 			return json(result);
 		}
 

@@ -6,6 +6,7 @@ import {
 	getEventPoints,
 	getEventActivityFeed,
 	getHighRankPlayers,
+	getTreatySignatures,
 	SystemUnavailableError
 } from '$lib/server/eventService';
 
@@ -24,14 +25,15 @@ export const load: PageServerLoad = async ({ params }) => {
 			throw error(404, `El evento "${params.slug}" no existe.`);
 		}
 
-		const [{ factions }, eventPoints, activityFeed, hallOfFame] = await Promise.all([
+		const [{ factions }, eventPoints, activityFeed, hallOfFame, treaty] = await Promise.all([
 			getEventFactionsAndAvatars(event.id),
 			getEventPoints(event.id),
 			getEventActivityFeed(event.id, 12),
-			getHighRankPlayers(event.id)
+			getHighRankPlayers(event.id),
+			getTreatySignatures(event.id)
 		]);
 
-		return { event, factions, eventPoints, activityFeed, hallOfFame };
+		return { event, factions, eventPoints, activityFeed, hallOfFame, treaty };
 	} catch (e) {
 		if (e instanceof SystemUnavailableError) {
 			throw error(503, PAGE_SYSTEM_ERROR_MESSAGE);

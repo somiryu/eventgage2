@@ -1,8 +1,21 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import { subscribeToEventActivity } from '$lib/client/supabaseClient';
+	import QRCode from 'qrcode';
 
 	const { data } = $props();
+
+	// URL de firma: siempre la misma base donde esté corriendo el servidor
+	// (localhost en dev, el dominio real en Netlify) — nunca hardcodeada.
+	let showQrModal = $state(false);
+	let qrDataUrl = $state('');
+	let treatyUrl = $derived(`${page.url.origin}/${data.event?.slug}/firmar-tratado`);
+
+	async function openQrModal() {
+		showQrModal = true;
+		qrDataUrl = await QRCode.toDataURL(treatyUrl, { width: 320, margin: 1 });
+	}
 
 	let activityFeed = $state<any[]>([]);
 	$effect(() => {
@@ -15,6 +28,7 @@
 		if (entry.type === 'milestone_reached') return `🏆 ${entry.payload?.playerName || 'Un agente'} alcanzó el Rango "${entry.payload?.rankTitle}".`;
 		if (entry.type === 'faction_lead_change') return `⚡ ¡${entry.payload?.factionName} tomó la delantera!`;
 		if (entry.type === 'ai_prompt_highlight') return `✨ ${entry.payload?.playerName || 'Un agente'} recibió una evaluación destacada de GIOCCHI en "${entry.payload?.missionTitle}".`;
+		if (entry.type === 'treaty_signed') return `🏛️ ${entry.payload?.playerName || 'Un agente'} firmó el Tratado Huizinga.`;
 		if (entry.type === 'gm_alert') return entry.payload?.message || 'Transmisión del Game Master.';
 		return 'Nueva actividad registrada.';
 	}
@@ -75,12 +89,31 @@
 
 <div class="dashboard">
 	<header class="dash-header">
+		<button class="qr-btn" onclick={openQrModal} title="Generar QR para firmar el Tratado" aria-label="Generar QR para firmar el Tratado">
+			📜 Generar QR para firma
+		</button>
 		<button class="refresh-btn" onclick={manualRefresh} disabled={refreshing} title="Actualizar ahora" aria-label="Actualizar ahora">
 			<span class:spin={refreshing}>⟳</span>
 		</button>
 		<h1>{data.event?.title}</h1>
 		<p class="dash-sub">Tablero de Estado Global — Transmisión en Vivo</p>
 	</header>
+
+	{#if showQrModal}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<div class="qr-overlay" onclick={() => (showQrModal = false)} role="presentation">
+			<div class="qr-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+				<h2>Firma el Tratado Huizinga</h2>
+				<p>Escanea con tu móvil (debes estar registrado en la Agencia).</p>
+				{#if qrDataUrl}
+					<img src={qrDataUrl} alt="Código QR para firmar el Tratado Huizinga" />
+				{/if}
+				<p class="qr-url">{treatyUrl}</p>
+				<button class="close-btn" onclick={() => (showQrModal = false)}>Cerrar</button>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Dos columnas: el Hall a la izquierda ocupa toda la altura disponible
 	     (su propia lista interna hace scroll si hace falta, sin desplazar la
@@ -132,6 +165,21 @@
 				</div>
 			</section>
 
+			<section class="treaty-panel">
+				<h2>Tratado Huizinga — Firmantes ({data.treaty?.count ?? 0})</h2>
+				{#if (data.treaty?.signatures || []).length > 0}
+					<div class="treaty-list">
+						{#each data.treaty.signatures as sig}
+							<span class="treaty-chip" class:precedence={sig.rank >= 3}>
+								{#if sig.rank >= 3}★{/if} {sig.name}
+							</span>
+						{/each}
+					</div>
+				{:else}
+					<p class="treaty-empty">Nadie ha firmado el Tratado todavía.</p>
+				{/if}
+			</section>
+
 			<section class="feed-panel">
 				<h2>Transmisiones Recientes</h2>
 				{#if activityFeed.length > 0}
@@ -171,6 +219,41 @@
 	.refresh-btn:disabled { opacity: 0.5; cursor: default; }
 	.refresh-btn .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 	@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+	.qr-btn {
+		position: absolute; top: 0; left: 0;
+		background: rgba(129,140,248,0.12); border: 1px solid rgba(129,140,248,0.35);
+		color: #c7d2fe; border-radius: 999px; padding: 0.6rem 1.1rem;
+		font-size: 0.85rem; font-weight: 600; cursor: pointer;
+	}
+	.qr-btn:hover { background: rgba(129,140,248,0.22); }
+
+	.qr-overlay {
+		position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+		display: flex; align-items: center; justify-content: center;
+		z-index: 50; padding: 1.5rem;
+	}
+	.qr-card {
+		background: #0b0f1a; border: 1px solid rgba(255,255,255,0.12);
+		border-radius: 1rem; padding: 2rem; text-align: center; max-width: 380px;
+	}
+	.qr-card h2 { margin: 0 0 0.5rem 0; font-size: 1.2rem; }
+	.qr-card p { color: #94a3b8; font-size: 0.9rem; margin: 0 0 1rem 0; }
+	.qr-card img { width: 100%; max-width: 280px; border-radius: 0.5rem; background: white; padding: 0.75rem; }
+	.qr-url { word-break: break-all; font-size: 0.75rem; color: #64748b; margin-top: 1rem !important; }
+	.close-btn {
+		margin-top: 1.25rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+		color: #e2e8f0; border-radius: 0.5rem; padding: 0.55rem 1.5rem; cursor: pointer;
+	}
+
+	.treaty-panel h2 { font-size: 1.1rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 1rem; }
+	.treaty-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+	.treaty-chip {
+		background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+		border-radius: 999px; padding: 0.35rem 0.9rem; font-size: 0.85rem; color: #cbd5e1;
+	}
+	.treaty-chip.precedence { border-color: #fbbf24; color: #fde68a; background: rgba(251,191,36,0.08); }
+	.treaty-empty { color: #64748b; font-size: 0.95rem; margin: 0; }
 
 	/* Dos columnas: el Hall (izquierda) se estira a la misma altura que la
 	   columna derecha (Inercia + Facciones + Feed apiladas) — su lista interna
