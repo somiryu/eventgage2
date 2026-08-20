@@ -45,6 +45,8 @@
 	import Users from '@lucide/svelte/icons/users';
 	import Check from '@lucide/svelte/icons/check';
 	import X from '@lucide/svelte/icons/x';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
+	import Building2 from '@lucide/svelte/icons/building-2';
 	import SkillBadge from '$lib/components/SkillBadge.svelte';
 	import VaultModal from '$lib/components/VaultModal.svelte';
 	import { subscribeToEventActivity } from '$lib/client/supabaseClient';
@@ -134,6 +136,8 @@
 		}
 		return 'Nueva actividad registrada.';
 	}
+
+	const vendorsList = $derived<any[]>(data.vendors || []);
 
 	// Onboarding Wizard por Pasos (Paso 1: Facción, Paso 2: Clase/Avatar)
 	let onboardingStep = $state<1 | 2>(1);
@@ -2883,34 +2887,75 @@
 							{/if}
 						</div>
 					{:else if feedSubTab === 'premium'}
-						<!-- PESTAÑA 3: PREMIUM (SPONSORS & ORGANIZADORES) -->
+						<!-- PESTAÑA 3: PREMIUM (DIRECTORIO DE SPONSORS & VENDORS) -->
 						<div class="premium-section">
-							<div class="premium-card">
-								<div class="premium-header">
-									<div class="premium-badge-group">
-										<span class="premium-badge">MÓDULO PREMIUM</span>
-										<span class="premium-badge-tag mono">EN DESARROLLO</span>
-									</div>
-									<span class="premium-sparkle-icon"><Sparkle size={24} /></span>
+							<!-- Header descriptivo de la sección -->
+							<div class="premium-header-bar">
+								<div class="premium-title-group">
+									<h3 class="premium-title">Sponsors & Aliados</h3>
+									<span class="premium-count-badge mono">{vendorsList.length} Organizaciones</span>
 								</div>
-
-								<h3 class="premium-title">Directorio de Sponsors y Organizadores</h3>
-								
-								<p class="premium-main-msg">
-									Acá aparecerán los contactos de los sponsors y organizadores. Por implementar.
+								<p class="premium-subtitle">
+									Organizaciones y líderes que impulsan el aprendizaje gamificado, innovación y agilismo en Gamescon.
 								</p>
+							</div>
 
-								<div class="premium-info-box">
-									<h4>📋 Especificación Técnica Pendiente:</h4>
-									<p>
-										Este módulo permitirá a los participantes explorar las marcas aliadas, stands corporativos, contactos comerciales (LinkedIn, teléfono, web oficial) y beneficios exclusivos del evento.
-									</p>
-									<ul class="premium-specs-list mono">
-										<li>• Tabla destino: <code>bem.eventgage_event_vendors</code></li>
-										<li>• Campos: <code>logo, name, contact_name, linkedin, phone, description, website_url</code></li>
-										<li>• Gestión: Panel administrativo de Game Masters (<code>/[slug]/game-masters</code>)</li>
-									</ul>
-								</div>
+							<!-- Lista de Sponsors / Aliados -->
+							<div class="vendors-list">
+								{#each vendorsList as vendor, i}
+									<article class="vendor-item">
+										<div class="vendor-logo-box">
+											{#if vendor.logo_url}
+												<img 
+													src={vendor.logo_url} 
+													alt="Logo de {vendor.name}" 
+													class="vendor-logo-img" 
+													loading="lazy"
+												/>
+											{:else}
+												<Building2 size={24} class="vendor-placeholder-icon" />
+											{/if}
+										</div>
+
+										<div class="vendor-info">
+											<h4 class="vendor-name">{vendor.name}</h4>
+
+											{#if vendor.tagline}
+												<p class="vendor-tagline">{vendor.tagline}</p>
+											{/if}
+
+											<div class="vendor-contact-line">
+												<div class="vendor-contact-meta">
+													<span class="vendor-contact-dot"></span>
+													<span class="vendor-contact-name">{vendor.contact_name}</span>
+												</div>
+
+												{#if vendor.linkedin_url}
+													<a 
+														href={vendor.linkedin_url} 
+														target="_blank" 
+														rel="noopener noreferrer" 
+														class="vendor-linkedin-chip"
+														title="Ver perfil de {vendor.contact_name} en LinkedIn"
+														aria-label="Perfil LinkedIn de {vendor.contact_name}"
+													>
+														<svg class="linkedin-chip-icon" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+															<path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.6a1.65 1.65 0 0 0-1.66 1.66 1.66 1.66 0 0 0 1.66 1.66 1.66 1.66 0 0 0 1.66-1.66A1.66 1.66 0 0 0 7.83 6.6Z"/>
+														</svg>
+														<span>LinkedIn</span>
+														<ExternalLink size={11} class="linkedin-ext-icon" />
+													</a>
+												{/if}
+											</div>
+										</div>
+									</article>
+								{/each}
+
+								{#if vendorsList.length === 0}
+									<div class="vendors-empty">
+										<p>No hay sponsors o aliados registrados actualmente.</p>
+									</div>
+								{/if}
 							</div>
 						</div>
 					{/if}
@@ -5812,101 +5857,228 @@
 		justify-content: center;
 	}
 
-	/* PREMIUM SUBTAB IN CANAL */
+	/* PREMIUM SUBTAB IN CANAL: DIRECTORY OF SPONSORS & VENDORS */
+	.premium-section {
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	/* PREMIUM SUBTAB IN CANAL: DIRECTORY OF SPONSORS & VENDORS */
 	.premium-section {
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
 	}
-	.premium-card {
-		background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
-		border: 1px solid rgba(251, 191, 36, 0.3);
+
+	.premium-header-bar {
+		background: rgba(15, 23, 42, 0.65);
+		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-lg);
-		padding: 1.5rem;
+		padding: 1rem 1.15rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.9rem;
-		box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), inset 0 0 15px rgba(251, 191, 36, 0.05);
+		gap: 0.35rem;
+		box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
 	}
-	.premium-header {
+
+	.premium-title-group {
 		display: flex;
+		align-items: center;
 		justify-content: space-between;
-		align-items: center;
-	}
-	.premium-badge-group {
-		display: flex;
-		align-items: center;
 		gap: 0.5rem;
-		flex-wrap: wrap;
 	}
-	.premium-badge {
-		font-size: 0.7rem;
-		font-weight: 800;
-		letter-spacing: 0.06em;
-		color: #fbbf24;
-		background: rgba(251, 191, 36, 0.15);
-		border: 1px solid rgba(251, 191, 36, 0.35);
-		padding: 0.25rem 0.6rem;
-		border-radius: var(--radius-pill);
-	}
-	.premium-badge-tag {
-		font-size: 0.68rem;
-		color: #94a3b8;
-	}
-	.premium-sparkle-icon {
-		color: #fbbf24;
-	}
+
 	.premium-title {
 		margin: 0;
-		font-size: var(--text-lg);
+		font-size: 1.05rem;
+		font-weight: 800;
 		color: #f8fafc;
+		letter-spacing: -0.01em;
 	}
-	.premium-main-msg {
-		margin: 0;
-		font-size: var(--text-md);
-		color: #e2e8f0;
-		font-weight: 500;
-		line-height: 1.5;
-		background: rgba(15, 23, 42, 0.5);
-		border: 1px dashed rgba(251, 191, 36, 0.25);
-		border-radius: var(--radius-md);
-		padding: 0.9rem 1rem;
-	}
-	.premium-info-box {
-		background: rgba(15, 23, 42, 0.6);
-		border: 1px solid rgba(255, 255, 255, 0.06);
-		border-radius: var(--radius-md);
-		padding: 1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
-	}
-	.premium-info-box h4 {
-		margin: 0;
-		font-size: var(--text-sm);
+
+	.premium-count-badge {
+		font-size: 0.68rem;
 		color: #94a3b8;
-		font-weight: 700;
+		background: rgba(255, 255, 255, 0.06);
+		padding: 0.15rem 0.5rem;
+		border-radius: var(--radius-pill);
+		border: 1px solid rgba(255, 255, 255, 0.08);
 	}
-	.premium-info-box p {
+
+	.premium-subtitle {
 		margin: 0;
-		font-size: var(--text-xs);
+		font-size: 0.8rem;
 		color: #94a3b8;
 		line-height: 1.45;
 	}
-	.premium-specs-list {
-		list-style: none;
-		padding: 0;
-		margin: 0.3rem 0 0 0;
+
+	.vendors-list {
 		display: flex;
 		flex-direction: column;
-		gap: 0.3rem;
-		font-size: 0.72rem;
-		color: #cbd5e1;
+		gap: 0.85rem;
 	}
-	.premium-specs-list code {
-		color: #fbbf24;
-		background: rgba(251, 191, 36, 0.1);
-		padding: 0.1rem 0.3rem;
-		border-radius: 3px;
+
+	.vendor-item {
+		background: linear-gradient(135deg, rgba(30, 41, 59, 0.55) 0%, rgba(15, 23, 42, 0.75) 100%);
+		border: 1px solid rgba(255, 255, 255, 0.09);
+		border-radius: var(--radius-lg);
+		padding: 0.95rem 1rem;
+		display: flex;
+		align-items: center;
+		gap: 0.95rem;
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+		transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+	}
+
+	.vendor-item:hover {
+		border-color: rgba(99, 102, 241, 0.35);
+		background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
+		transform: translateY(-1px);
+	}
+
+	.vendor-logo-box {
+		background: rgba(15, 23, 42, 0.9);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: var(--radius-md);
+		height: 62px;
+		width: 96px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.35rem 0.5rem;
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+
+	.vendor-logo-img {
+		max-width: 100%;
+		max-height: 100%;
+		width: auto;
+		height: auto;
+		object-fit: contain;
+		display: block;
+	}
+
+	.vendor-placeholder-icon {
+		color: #64748b;
+	}
+
+	.vendor-info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.vendor-name {
+		margin: 0;
+		font-size: 0.98rem;
+		font-weight: 800;
+		color: #f8fafc;
+		letter-spacing: -0.01em;
+	}
+
+	.vendor-tagline {
+		margin: 0;
+		font-size: 0.78rem;
+		color: #94a3b8;
+		line-height: 1.35;
+	}
+
+	.vendor-contact-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		margin-top: 0.3rem;
+		padding-top: 0.4rem;
+		border-top: 1px solid rgba(255, 255, 255, 0.05);
+		flex-wrap: wrap;
+	}
+
+	.vendor-contact-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.76rem;
+		color: #cbd5e1;
+		font-weight: 600;
+		min-width: 0;
+	}
+
+	.vendor-contact-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: #22c55e;
+		flex-shrink: 0;
+	}
+
+	.vendor-contact-name {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.vendor-linkedin-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.2rem 0.55rem;
+		border-radius: var(--radius-pill);
+		background: rgba(10, 102, 194, 0.12);
+		border: 1px solid rgba(10, 102, 194, 0.35);
+		color: #60a5fa;
+		font-size: 0.7rem;
+		font-weight: 600;
+		text-decoration: none;
+		transition: all 0.15s ease;
+		flex-shrink: 0;
+	}
+
+	.vendor-linkedin-chip:hover,
+	.vendor-linkedin-chip:focus-visible {
+		background: rgba(10, 102, 194, 0.28);
+		border-color: #3b82f6;
+		color: #93c5fd;
+		transform: scale(1.03);
+	}
+
+	.linkedin-chip-icon {
+		flex-shrink: 0;
+		color: #0077b5;
+	}
+
+	:global(.linkedin-ext-icon) {
+		opacity: 0.75;
+	}
+
+	.vendors-empty {
+		background: rgba(15, 23, 42, 0.5);
+		border: 1px dashed rgba(255, 255, 255, 0.1);
+		border-radius: var(--radius-md);
+		padding: 2rem;
+		text-align: center;
+		color: #94a3b8;
+		font-size: var(--text-sm);
+	}
+
+	@media (max-width: 420px) {
+		.vendor-item {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.75rem;
+		}
+
+		.vendor-logo-box {
+			width: 100%;
+			height: 56px;
+		}
+
+		.vendor-info {
+			width: 100%;
+		}
 	}
 </style>

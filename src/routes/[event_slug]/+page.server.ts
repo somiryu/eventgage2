@@ -15,6 +15,7 @@ import {
 	checkExpiredTimeBombs,
 	getEventActivityFeed,
 	getEventLevels,
+	getEventVendors,
 	getAdminCharacters,
 	SystemUnavailableError
 } from '$lib/server/eventService';
@@ -54,7 +55,8 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 			votingResults,
 			playerState,
 			activityFeed,
-			levels
+			levels,
+			vendors
 		] = await Promise.all([
 			getEventFactionsAndAvatars(event.id),
 			getEventMissions(event.id),
@@ -68,7 +70,8 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 			getVotingResults(event.id),
 			getPlayerAvatar(user.id, event.id),
 			getEventActivityFeed(event.id),
-			getEventLevels(event.id)
+			getEventLevels(event.id),
+			getEventVendors(event.id)
 		]);
 
 		// Sincroniza expiraciones de time_bomb en cada carga de página —
@@ -93,7 +96,8 @@ export const load: PageServerLoad = async ({ params, cookies }) => {
 			votingResults,
 			playerState,
 			activityFeed,
-			levels
+			levels,
+			vendors
 		};
 	} catch (e) {
 		if (e instanceof SystemUnavailableError) {

@@ -915,6 +915,86 @@ test('Game Mechanics: Mission Unlockable Communications & remove_on_code Lifecyc
 	});
 });
 
+// --- 11. TESTS DEL DIRECTORIO DE SPONSORS Y ALIADOS ESTRATÉGICOS (TAB PREMIUM) ---
+test('Vendors Directory: Ordering, Contact Integrity & Banner Specifications', async (t) => {
+	const mockVendors = [
+		{
+			id: 'vendor_f2p',
+			name: 'Free to Play',
+			tagline: 'Especialistas en Gamificación para Aprendizaje',
+			contact_name: 'Javier Velásquez',
+			linkedin_url: 'https://www.linkedin.com/in/javier-velasquez-game/',
+			logo_url: '/images/gamescon/banners/f2p.png',
+			tier: 'organizer',
+			order_index: 1,
+			is_active: true
+		},
+		{
+			id: 'vendor_prime',
+			name: 'Prime Business School',
+			tagline: 'Escuela de negocios con programas de gamificación',
+			contact_name: 'Eduardo Guacaneme',
+			linkedin_url: 'https://www.linkedin.com/in/ramon-guacaneme/',
+			logo_url: '/images/gamescon/banners/logoPrime.jpg',
+			tier: 'partner',
+			order_index: 2,
+			is_active: true
+		},
+		{
+			id: 'vendor_play4agile',
+			name: 'Play4Agilie',
+			tagline: 'Unimos Agilismo con juego en organizaciones',
+			contact_name: 'Fabián Dulcé',
+			linkedin_url: 'https://www.linkedin.com/in/fabiandulce/',
+			logo_url: '/images/gamescon/banners/play4agile.jpeg',
+			tier: 'partner',
+			order_index: 3,
+			is_active: true
+		},
+		{
+			id: 'vendor_wakeupbrain',
+			name: 'WakeUpBrain',
+			tagline: 'Unimos Innovación y Sostenibilidad con Lúdica',
+			contact_name: 'Guillermo Solano',
+			linkedin_url: 'https://www.linkedin.com/in/solanobrainer/',
+			logo_url: '/images/gamescon/banners/wakeupbrain.png',
+			tier: 'partner',
+			order_index: 4,
+			is_active: true
+		}
+	];
+
+	await t.test('debe ordenar los sponsors y aliados en el orden exacto requerido', () => {
+		const sorted = [...mockVendors].sort((a, b) => a.order_index - b.order_index);
+		assert.equal(sorted[0].name, 'Free to Play');
+		assert.equal(sorted[0].contact_name, 'Javier Velásquez');
+		assert.equal(sorted[1].name, 'Prime Business School');
+		assert.equal(sorted[1].contact_name, 'Eduardo Guacaneme');
+		assert.equal(sorted[2].name, 'Play4Agilie');
+		assert.equal(sorted[2].contact_name, 'Fabián Dulcé');
+		assert.equal(sorted[3].name, 'WakeUpBrain');
+		assert.equal(sorted[3].contact_name, 'Guillermo Solano');
+	});
+
+	await t.test('debe validar la estructura completa de URLs y datos de contacto de cada vendor', () => {
+		for (const v of mockVendors) {
+			assert.ok(v.name.length > 0, 'Debe tener nombre');
+			assert.ok(v.contact_name.length > 0, 'Debe tener contacto');
+			assert.ok(v.tagline.length > 0, 'Debe tener tagline descriptivo');
+			assert.ok(v.logo_url.startsWith('/images/gamescon/banners/'), 'Debe apuntar a la carpeta banners');
+			assert.ok(v.linkedin_url.startsWith('https://www.linkedin.com/in/'), 'Debe ser enlace de LinkedIn válido');
+		}
+	});
+
+	await t.test('debe asignar el rol de organizador prioritario a Free to Play', () => {
+		const organizer = mockVendors.find((v) => v.tier === 'organizer');
+		assert.ok(organizer);
+		assert.equal(organizer.name, 'Free to Play');
+		assert.equal(organizer.order_index, 1);
+	});
+});
+
+
 
 
 

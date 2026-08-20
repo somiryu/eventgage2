@@ -781,13 +781,13 @@ BEGIN
     ('vote_metrica_vanidad', v_event_id, 'Votación: La Métrica que Defenderías', 'Debés defender ante la dirección qué métrica reportar como éxito de un programa de gamificación. ¿Cuál defenderías con más fuerza?', 'Debés defender ante la dirección qué métrica reportar como éxito de un programa de gamificación. ¿Cuál defenderías con más fuerza?', NULL, NULL, 'collective_vote', NULL, true, 1, NULL, 0, 0, '{"question": "Debés defender ante la dirección qué métrica reportar como éxito de un programa de gamificación. ¿Cuál defenderías con más fuerza?", "options": [{"id": "a", "text": "Número de interacciones/clics generados"}, {"id": "b", "text": "Cambio real medible en el desempeño o comportamiento del participante"}, {"id": "c", "text": "Nivel de satisfacción declarado en una encuesta de salida"}]}'::jsonb)
     ON CONFLICT (id, event_id) DO UPDATE SET mechanic = EXCLUDED.mechanic, title = EXCLUDED.title, preview = EXCLUDED.preview, description = EXCLUDED.description;
 
-    -- 12. Inercia Global (puntaje mundial, sección 1.3.3): valor fijo
+    -- 12. Inercia Educación Tradicional (puntaje mundial, sección 1.3.3): valor fijo
     -- configurable por evento, no calculado por el motor — ver la nota al
     -- inicio de este archivo sobre por qué se dejó de lado la fórmula
     -- dinámica (Registrados × 3) del diseño original.
     INSERT INTO bem.eventgage_event_points (id, event_id, point_key, display_name, current_points, max_points, rules)
     VALUES
-    ('pt_inercia_global', v_event_id, 'inercia_global', 'Inercia Global', 250, 250, '[]'::jsonb)
+    ('pt_inercia_global', v_event_id, 'inercia_global', 'Inercia Educación Tradicional', 250, 250, '[]'::jsonb)
     ON CONFLICT (id, event_id) DO UPDATE SET display_name = EXCLUDED.display_name;
 
     -- 13. Personajes Oficiales de Gamescon (sección 5 y directivas de evento)
@@ -882,5 +882,69 @@ BEGIN
         type = EXCLUDED.type,
         expiration_seconds = EXCLUDED.expiration_seconds;
 
+    -- 17. Directorio Oficial de Sponsors y Aliados Estratégicos (Tab Premium en Canal)
+    INSERT INTO bem.eventgage_event_vendors (
+        event_id, name, tagline, description, contact_name, linkedin_url, logo_url, tier, order_index, is_active
+    ) VALUES
+    (
+        v_event_id,
+        'Free to Play',
+        'Especialistas en Gamificación para Aprendizaje',
+        'Consultoría estratégica y diseño de experiencias lúdicas formativas de alto impacto.',
+        'Javier Velásquez',
+        'https://www.linkedin.com/in/javier-velasquez-game/',
+        '/images/gamescon/banners/f2p.png',
+        'organizer',
+        1,
+        true
+    ),
+    (
+        v_event_id,
+        'Prime Business School',
+        'Escuela de negocios con programas de gamificación',
+        'Formación ejecutiva y programas avanzados en metodologías de innovación y lúdica corporativa.',
+        'Eduardo Guacaneme',
+        'https://www.linkedin.com/in/ramon-guacaneme/',
+        '/images/gamescon/banners/logoPrime.jpg',
+        'partner',
+        2,
+        true
+    ),
+    (
+        v_event_id,
+        'Play4Agilie',
+        'Unimos Agilismo con juego en organizaciones',
+        'Transformación cultural, marcos ágiles y dinámicas de gamificación para equipos de alto desempeño.',
+        'Fabián Dulcé',
+        'https://www.linkedin.com/in/fabiandulce/',
+        '/images/gamescon/banners/play4agile.jpeg',
+        'partner',
+        3,
+        true
+    ),
+    (
+        v_event_id,
+        'WakeUpBrain',
+        'Unimos Innovación y Sostenibilidad con Lúdica',
+        'Metodología y juegos de aceleración para la resolución creativa de problemas e innovación sostenible.',
+        'Guillermo Solano',
+        'https://www.linkedin.com/in/solanobrainer/',
+        '/images/gamescon/banners/wakeupbrain.png',
+        'partner',
+        4,
+        true
+    )
+    ON CONFLICT (event_id, name) DO UPDATE SET
+        tagline = EXCLUDED.tagline,
+        description = EXCLUDED.description,
+        contact_name = EXCLUDED.contact_name,
+        linkedin_url = EXCLUDED.linkedin_url,
+        logo_url = EXCLUDED.logo_url,
+        tier = EXCLUDED.tier,
+        order_index = EXCLUDED.order_index,
+        is_active = EXCLUDED.is_active,
+        updated_at = NOW();
+
 END $$;
+
 

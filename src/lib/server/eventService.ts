@@ -435,6 +435,98 @@ export async function getEventRewards(eventId: string) {
 	return [];
 }
 
+export interface EventVendor {
+	id: string;
+	event_id: string;
+	name: string;
+	tagline?: string;
+	description?: string;
+	contact_name: string;
+	linkedin_url?: string;
+	phone?: string;
+	website_url?: string;
+	logo_url: string;
+	tier?: 'organizer' | 'sponsor' | 'partner' | string;
+	order_index: number;
+	is_active?: boolean;
+}
+
+const defaultGamesconVendors: EventVendor[] = [
+	{
+		id: 'vendor_f2p',
+		event_id: 'b8ea6358-ab3c-40c8-baef-0f7107716460',
+		name: 'Free to Play',
+		tagline: 'Especialistas en Gamificación para Aprendizaje',
+		description: 'Consultoría estratégica y diseño de experiencias lúdicas formativas de alto impacto.',
+		contact_name: 'Javier Velásquez',
+		linkedin_url: 'https://www.linkedin.com/in/javier-velasquez-game/',
+		logo_url: '/images/gamescon/banners/f2p.png',
+		tier: 'organizer',
+		order_index: 1,
+		is_active: true
+	},
+	{
+		id: 'vendor_prime',
+		event_id: 'b8ea6358-ab3c-40c8-baef-0f7107716460',
+		name: 'Prime Business School',
+		tagline: 'Escuela de negocios con programas de gamificación',
+		description: 'Formación ejecutiva y programas avanzados en metodologías de innovación y lúdica corporativa.',
+		contact_name: 'Eduardo Guacaneme',
+		linkedin_url: 'https://www.linkedin.com/in/ramon-guacaneme/',
+		logo_url: '/images/gamescon/banners/logoPrime.jpg',
+		tier: 'partner',
+		order_index: 2,
+		is_active: true
+	},
+	{
+		id: 'vendor_play4agile',
+		event_id: 'b8ea6358-ab3c-40c8-baef-0f7107716460',
+		name: 'Play4Agilie',
+		tagline: 'Unimos Agilismo con juego en organizaciones',
+		description: 'Transformación cultural, marcos ágiles y dinámicas de gamificación para equipos de alto desempeño.',
+		contact_name: 'Fabián Dulcé',
+		linkedin_url: 'https://www.linkedin.com/in/fabiandulce/',
+		logo_url: '/images/gamescon/banners/play4agile.jpeg',
+		tier: 'partner',
+		order_index: 3,
+		is_active: true
+	},
+	{
+		id: 'vendor_wakeupbrain',
+		event_id: 'b8ea6358-ab3c-40c8-baef-0f7107716460',
+		name: 'WakeUpBrain',
+		tagline: 'Unimos Innovación y Sostenibilidad con Lúdica',
+		description: 'Metodología y juegos de aceleración para la resolución creativa de problemas e innovación sostenible.',
+		contact_name: 'Guillermo Solano',
+		linkedin_url: 'https://www.linkedin.com/in/solanobrainer/',
+		logo_url: '/images/gamescon/banners/wakeupbrain.png',
+		tier: 'partner',
+		order_index: 4,
+		is_active: true
+	}
+];
+
+export async function getEventVendors(eventId: string): Promise<EventVendor[]> {
+	try {
+		const { data, error } = await supabaseServer
+			.from('eventgage_event_vendors')
+			.select('*')
+			.eq('event_id', eventId)
+			.eq('is_active', true)
+			.order('order_index', { ascending: true })
+			.order('created_at', { ascending: true });
+
+		if (!error && data && data.length > 0) {
+			return data as EventVendor[];
+		}
+	} catch (e) {
+		console.error(`[eventService] Error consultando Supabase en getEventVendors("${eventId}"):`, e);
+	}
+
+	// Fallback local con los 4 sponsors ordenados
+	return defaultGamesconVendors.map(v => ({ ...v, event_id: eventId }));
+}
+
 export interface EventLevel {
 	id: string;
 	event_id: string;

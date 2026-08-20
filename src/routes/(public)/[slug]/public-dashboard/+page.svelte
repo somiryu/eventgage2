@@ -143,7 +143,7 @@
 		<div class="dashboard-side">
 			<section class="inercia-panel">
 				<div class="inercia-label">
-					<span>{data.eventPoints?.display_name || 'Inercia Global'}</span>
+					<span>{data.eventPoints?.display_name || 'Inercia Educación Tradicional'}</span>
 					<strong>{data.eventPoints?.current_points ?? '—'} / {data.eventPoints?.max_points ?? '—'}</strong>
 				</div>
 				<div class="inercia-bar-track">
