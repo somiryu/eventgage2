@@ -9,6 +9,7 @@ import {
 	getTreatySignatures,
 	SystemUnavailableError
 } from '$lib/server/eventService';
+import { getRouteStats } from '$lib/server/routeService';
 
 // Ruta pública, sin autenticación (sección 11.1 del GDD — "Tablero de Estado
 // Global en Tiempo Real" para proyectar en pantalla gigante durante la
@@ -33,7 +34,17 @@ export const load: PageServerLoad = async ({ params }) => {
 			getTreatySignatures(event.id)
 		]);
 
-		return { event, factions, eventPoints, activityFeed, hallOfFame, treaty };
+		// Evento tipo ruta (config.passport): guaridas más visitadas en vivo.
+		let topStops: Array<{ n: number; vendorName: string; visits: number; imageUrl: string | null }> = [];
+		if (event.config?.passport) {
+			const route = await getRouteStats(event);
+			topStops = [...route.stops]
+				.sort((a, b) => b.visits - a.visits || a.n - b.n)
+				.slice(0, 5)
+				.map((s) => ({ n: s.n, vendorName: s.vendorName, visits: s.visits, imageUrl: s.imageUrl }));
+		}
+
+		return { event, factions, eventPoints, activityFeed, hallOfFame, treaty, topStops };
 	} catch (e) {
 		if (e instanceof SystemUnavailableError) {
 			throw error(503, PAGE_SYSTEM_ERROR_MESSAGE);

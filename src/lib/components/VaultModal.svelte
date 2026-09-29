@@ -13,16 +13,31 @@
 		onClose: () => void;
 		onPurchase: (rewardId: string) => Promise<{ success: boolean; message: string }>;
 		onActivateBoost: () => Promise<{ success: boolean; message: string }>;
+		title?: string;
+		hint?: string;
+		currencyIcon?: string;
 	}
 
-	let { open, rewards, player, onClose, onPurchase, onActivateBoost }: Props = $props();
+	let {
+		open,
+		rewards,
+		player,
+		onClose,
+		onPurchase,
+		onActivateBoost,
+		title = 'Bóveda de Inteligencia',
+		hint = 'Invertí tus Ludens en ayudas tácticas y herramientas de transferencia metodológica.',
+		currencyIcon = '💠'
+	}: Props = $props();
 
 	const CATEGORY_LABELS: Record<string, string> = {
 		game_aid: 'Ayuda Táctica de Juego',
 		b2b_tool: 'Herramienta B2B',
-		vip_lead: 'Conversión VIP'
+		vip_lead: 'Conversión VIP',
+		coupon: 'Cupones de aliados',
+		raffle: 'Sorteos'
 	};
-	const CATEGORY_ORDER = ['game_aid', 'b2b_tool', 'vip_lead'];
+	const CATEGORY_ORDER = ['game_aid', 'coupon', 'raffle', 'b2b_tool', 'vip_lead'];
 
 	const cpPoints = $derived(player?.avatar?.cp?.points ?? 0);
 	const playerLevel = $derived(player?.avatar?.xp?.level ?? 1);
@@ -37,7 +52,10 @@
 			if (!groups[r.category]) groups[r.category] = [];
 			groups[r.category].push(r);
 		}
-		return CATEGORY_ORDER.filter((c) => groups[c]?.length).map((c) => ({
+		// Categorías conocidas primero, en su orden; cualquier otra que traiga
+		// el catálogo del evento se muestra después en vez de desaparecer.
+		const extra = Object.keys(groups).filter((c) => !CATEGORY_ORDER.includes(c));
+		return [...CATEGORY_ORDER, ...extra].filter((c) => groups[c]?.length).map((c) => ({
 			category: c,
 			label: CATEGORY_LABELS[c] || c,
 			items: groups[c]
@@ -100,10 +118,10 @@
 			onkeydown={(e) => e.stopPropagation()}
 		>
 			<div class="vault-header">
-				<h3>Bóveda de Inteligencia</h3>
-				<div class="vault-balance mono"><Gem size={15} /> {cpPoints}</div>
+				<h3>{title}</h3>
+				<div class="vault-balance mono">{#if currencyIcon === '💠'}<Gem size={15} />{:else}{currencyIcon}{/if} {cpPoints}</div>
 			</div>
-			<p class="vault-hint">Invertí tus Ludens en ayudas tácticas y herramientas de transferencia metodológica.</p>
+			<p class="vault-hint">{hint}</p>
 
 			{#if vipToken}
 				<div class="vault-vip-token">
@@ -164,7 +182,7 @@
 											disabled={true}
 											title="Debes estar en nivel {requiredLevel} para adquirir"
 										>
-											<Lock size={11} /> {reward.cost} 💠
+											<Lock size={11} /> {reward.cost} {currencyIcon}
 										</button>
 									{:else}
 										<button
@@ -173,7 +191,7 @@
 											onclick={() => handlePurchase(reward.id)}
 											disabled={pendingId === reward.id || cpPoints < reward.cost}
 										>
-											{pendingId === reward.id ? '...' : `${reward.cost} 💠`}
+											{pendingId === reward.id ? '...' : `${reward.cost} ${currencyIcon}`}
 										</button>
 									{/if}
 								</div>
@@ -204,7 +222,7 @@
 		z-index: 210;
 	}
 	.vault-card {
-		background: #0f172a;
+		background: var(--panel-deep, #0f172a);
 		border: 1px solid rgba(251, 191, 36, 0.35);
 		border-radius: var(--radius-lg, 0.85rem);
 		padding: 1.5rem;
@@ -237,7 +255,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.3rem;
-		background: rgba(30, 41, 59, 0.8);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.8);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		padding: 0.3rem 0.6rem;
 		border-radius: var(--radius-pill, 9999px);
@@ -262,13 +280,13 @@
 
 	.vault-groups { display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; margin: -0.2rem -0.3rem 0; padding: 0.2rem 0.3rem 0; }
 	.vault-group { display: flex; flex-direction: column; gap: 0.4rem; }
-	.vault-group-title { font-size: var(--text-xs, 0.65rem); font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #818cf8; }
+	.vault-group-title { font-size: var(--text-xs, 0.65rem); font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent-soft, #818cf8); }
 
 	.vault-item {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.6rem;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.06);
 		border-radius: var(--radius-sm, 0.5rem);
 		padding: 0.6rem 0.7rem;
@@ -276,7 +294,7 @@
 	}
 	.vault-item.locked-item {
 		border-color: rgba(245, 158, 11, 0.25);
-		background: rgba(30, 41, 59, 0.35);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.35);
 	}
 	.vault-item-info { flex: 1; min-width: 0; }
 	.vault-item-title-row {
@@ -315,7 +333,7 @@
 
 	.vault-item-action { flex-shrink: 0; }
 	.vault-buy-btn {
-		background: linear-gradient(135deg, #6366f1, #a855f7);
+		background: linear-gradient(135deg, var(--accent, #6366f1), var(--accent2, #a855f7));
 		border: none;
 		color: #fff;
 		font-family: var(--font-mono, monospace);

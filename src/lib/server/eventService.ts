@@ -2,6 +2,7 @@ import { supabaseServer, supabaseRealtime } from './supabaseClient';
 import { dev } from '$app/environment';
 import { evaluateAiPromptChallenge, AI_PROMPT_FALLBACK_FEEDBACK, AI_PROMPT_FALLBACK_XP } from './giocchiService';
 import { trackAnalyticsEvent } from './analyticsService';
+import { resolveEventCopy, type EventCopy } from '$lib/eventCopy';
 
 /**
  * Sirve contenido de ejemplo SOLO en desarrollo local cuando Supabase no responde
@@ -121,7 +122,7 @@ export async function getEventBySlug(slug: string) {
 				title: 'CyberCon 2026 Demo',
 				description: 'Evento interactivo de prueba para demostrar las mecánicas de Eventgage.',
 				current_chapter: 1,
-				config: {}
+				config: {} as Record<string, any>
 			},
 			null
 		);
@@ -881,6 +882,7 @@ export async function createPlayerAvatar(
 ) {
 	const { avatars } = await getEventFactionsAndAvatars(eventId);
 	const selectedTemplate = avatars.find((a: any) => a.id === avatarChoiceId) || avatars[0];
+	const copy = await getServerEventCopy(eventId);
 
 	const selectedImageUrl = gender === 'female'
 		? (selectedTemplate.image_url_f || selectedTemplate.image_url)
@@ -897,9 +899,10 @@ export async function createPlayerAvatar(
 		sp: selectedTemplate.default_sp || { ANA: 10, EST: 10, DIS: 10, FAC: 10 },
 		cp: selectedTemplate.default_cp || { points: 0, icon: '💠' },
 		dp: selectedTemplate.default_dp || { misiones_resueltas: 0 },
-		// Rango 1 (Recluta de la Red) por defecto — ver sección 1.3.4 del diseño.
+		// Rango 1 por defecto (Gamescon: "Recluta de la Red", sección 1.3.4
+		// del diseño) — el título viene del copy del evento.
 		rank: 1,
-		rank_title: 'Recluta de la Red'
+		rank_title: copy.rank_default
 	};
 
 	const initialStatusObj = {
@@ -998,8 +1001,9 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 	if (!updatedStatus.completed_missions) updatedStatus.completed_missions = [];
 	if (!updatedStatus.redeemed_codes) updatedStatus.redeemed_codes = [];
 
+	const copy = await getServerEventCopy(eventId);
 	if (updatedStatus.redeemed_codes.includes(cleanCode)) {
-		return { success: false, message: 'Cipher ya tiene registrado ese código en tu expediente, Agente — no hace falta canjearlo dos veces.' };
+		return { success: false, message: copy.messages.duplicate_code };
 	}
 
 	// 1. Intentar validar código en la tabla eventgage_event_codes de Supabase
@@ -1074,6 +1078,12 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 	let xpReward = 150;
 	let cpReward = 50;
 	let rewardMsg = '';
+	// Puntos de facción y del medidor mundial que otorga este canje. Opt-in
+	// por código/misión (`rewards.faction_points` / `rewards.world_points`):
+	// Gamescon no los define, así que sus códigos siguen sin mover facciones.
+	let factionPointsReward = 0;
+	let worldPointsReward = 0;
+	const icon = updatedAvatar.cp?.icon || copy.currency_icon;
 	// Ítems desbloqueados en ESTE canje — alimenta markItemsGloballyUnlocked
 	// al final (fix del bug is_public, ver esa función).
 	const newlyUnlockedItemIds: string[] = [];
@@ -1082,6 +1092,8 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 	if (matchedCodeRecord) {
 		if (matchedCodeRecord.rewards?.xp) xpReward = matchedCodeRecord.rewards.xp;
 		if (matchedCodeRecord.rewards?.cp) cpReward = matchedCodeRecord.rewards.cp;
+		if (typeof matchedCodeRecord.rewards?.faction_points === 'number') factionPointsReward = matchedCodeRecord.rewards.faction_points;
+		if (typeof matchedCodeRecord.rewards?.world_points === 'number') worldPointsReward = matchedCodeRecord.rewards.world_points;
 		if (matchedCodeRecord.unlocks_item && !updatedStatus.unlocked_items.includes(matchedCodeRecord.unlocks_item)) {
 			updatedStatus.unlocked_items.unshift(matchedCodeRecord.unlocks_item);
 			newlyUnlockedItemIds.push(matchedCodeRecord.unlocks_item);
@@ -1090,7 +1102,7 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 			updatedStatus.unlocked_missions.unshift(matchedCodeRecord.unlocks_mission);
 			newlyUnlockedMissionIds.push(matchedCodeRecord.unlocks_mission);
 		}
-		rewardMsg = `¡Código ${cleanCode} canjeado con éxito! +${xpReward} XP, +${cpReward} CP.`;
+		rewardMsg = `¡Código ${cleanCode} canjeado con éxito! +${xpReward} XP, +${cpReward} ${icon}.`;
 	}
 
 	if (matchedMissionRecord) {
@@ -1098,6 +1110,8 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 		const rewards = mech.rewards || mech.success_rewards || {};
 		if (rewards.xp) xpReward = rewards.xp;
 		if (rewards.cp) cpReward = rewards.cp;
+		if (typeof rewards.faction_points === 'number') factionPointsReward = rewards.faction_points;
+		if (typeof rewards.world_points === 'number') worldPointsReward = rewards.world_points;
 
 		if (!updatedStatus.completed_missions.includes(matchedMissionRecord.id)) {
 			updatedStatus.completed_missions.push(matchedMissionRecord.id);
@@ -1129,7 +1143,9 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 			}
 		}
 
-		rewardMsg = `¡Código de misión validado (${cleanCode})! +${xpReward} XP, +${cpReward} CP y misión "${matchedMissionRecord.title}" completada.`;
+		rewardMsg = mech.success_message
+			? `${mech.success_message} +${xpReward} XP, +${cpReward} ${icon}.`
+			: `¡Código de misión validado (${cleanCode})! +${xpReward} XP, +${cpReward} ${icon} y misión "${matchedMissionRecord.title}" completada.`;
 	}
 
 	// Fallback por si era demo puro (solo en desarrollo local, ver isDemoFallbackCode arriba)
@@ -1176,7 +1192,7 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 	if (matchedMissionRecord) {
 		const milestoneList = await getEventMilestones(eventId);
 		milestonesReached = checkAndApplyMilestones(updatedAvatar, updatedStatus, milestoneList);
-		if (milestonesReached.length) rewardMsg = `${rewardMsg} ${formatMilestoneMessages(milestonesReached)}`;
+		if (milestonesReached.length) rewardMsg = `${rewardMsg} ${formatMilestoneMessages(milestonesReached, icon)}`;
 	}
 
 	const eventLevels = await getEventLevels(eventId);
@@ -1198,6 +1214,8 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 		if (milestonesReached.length > 0) {
 			await broadcastMilestoneReached(eventId, updatedAvatar.name, milestonesReached);
 		}
+		if (factionPointsReward) await incrementFactionPoints(eventId, updatedAvatar.faction_id, factionPointsReward);
+		if (worldPointsReward) await adjustWorldPoints(eventId, worldPointsReward);
 	} catch (e) {
 		console.warn('Updated player in memory:', e);
 	}
@@ -1264,13 +1282,14 @@ export async function submitCodeForPlayer(userId: string, eventId: string, codeS
 export async function purchaseReward(userId: string, eventId: string, rewardId: string) {
 	const player = await getPlayerAvatar(userId, eventId);
 	if (!player) {
-		return { success: false, message: 'Debes unirte al evento y seleccionar un avatar antes de comprar en la Bóveda.' };
+		return { success: false, message: 'Debes unirte al evento y seleccionar un avatar antes de canjear premios.' };
 	}
 
+	const copy = await getServerEventCopy(eventId);
 	const catalog = await getEventRewards(eventId);
 	const reward = catalog.find((r: any) => r.id === rewardId);
 	if (!reward) {
-		return { success: false, message: 'Esa recompensa no está disponible en la Bóveda.' };
+		return { success: false, message: `Ese premio no está disponible en ${copy.vault_name}.` };
 	}
 
 	const status = normalizeGameStatus(player.game_status);
@@ -1279,7 +1298,8 @@ export async function purchaseReward(userId: string, eventId: string, rewardId: 
 	}
 
 	const avatar = { ...player.avatar };
-	avatar.cp = avatar.cp || { points: 0, icon: '💠' };
+	avatar.cp = avatar.cp || { points: 0, icon: copy.currency_icon };
+	const icon = avatar.cp.icon || copy.currency_icon;
 	const eventLevels = await getEventLevels(eventId);
 	const requiredLevel = reward.min_level ?? (reward.id === 'rew_prime_vip_consultancy' ? 4 : 1);
 	const playerLevel = avatar.xp?.level ?? calculateLevel(avatar.xp?.points ?? 0, eventLevels);
@@ -1291,7 +1311,7 @@ export async function purchaseReward(userId: string, eventId: string, rewardId: 
 	}
 
 	if (avatar.cp.points < reward.cost) {
-		return { success: false, message: `Te faltan Ludens para esta recompensa (necesitás ${reward.cost} 💠, tenés ${avatar.cp.points}).` };
+		return { success: false, message: `Te faltan ${copy.currency_name} para este premio (necesitás ${reward.cost} ${icon}, tenés ${avatar.cp.points}).` };
 	}
 
 	avatar.cp.points -= reward.cost;
@@ -1301,6 +1321,14 @@ export async function purchaseReward(userId: string, eventId: string, rewardId: 
 	if (reward.category === 'vip_lead' && !status.vip_token) {
 		status.vip_token = `PRIME-VIP-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 		vipTokenMsg = ` Tu token de Consulta VIP: ${status.vip_token}.`;
+	}
+	// Cupones (p.ej. descuentos de una tienda aliada): cada premio de
+	// categoría `coupon` genera su propio código único, que el jugador
+	// muestra en el stand para hacerlo efectivo.
+	if (reward.category === 'coupon') {
+		if (!status.coupons || typeof status.coupons !== 'object') status.coupons = {};
+		status.coupons[rewardId] = `CUPON-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+		vipTokenMsg = ` Tu cupón: ${status.coupons[rewardId]} — muéstralo en el stand.`;
 	}
 
 	player.avatar = avatar;
@@ -1318,7 +1346,7 @@ export async function purchaseReward(userId: string, eventId: string, rewardId: 
 
 	return attachWorldState(eventId, {
 		success: true,
-		message: `Canjeaste "${reward.name}" por ${reward.cost} 💠.${vipTokenMsg}`,
+		message: `Canjeaste "${reward.name}" por ${reward.cost} ${icon}.${vipTokenMsg}`,
 		playerState: player
 	});
 }
@@ -1924,17 +1952,36 @@ const DEFAULT_MILESTONES: Array<{
 	{ count: 12, xp: 150, cp: 0, spBonus: 0, rank: 5, rankTitle: 'Agente Master Huizinga', lore: 'Consagración de honor al cierre del evento.' }
 ];
 
+// Copy narrativo resuelto del evento (preset + config.copy, ver
+// src/lib/eventCopy.ts) para los mensajes que arma el servidor. Si la
+// consulta falla se usa el preset neutro — un mensaje genérico nunca rompe
+// una acción del jugador.
+export async function getServerEventCopy(eventId: string): Promise<EventCopy> {
+	try {
+		const { data } = await supabaseServer
+			.from('eventgage_events')
+			.select('slug, config')
+			.eq('id', eventId)
+			.maybeSingle();
+		return resolveEventCopy(data as any);
+	} catch (e) {
+		console.error(`[eventService] Error obteniendo copy para evento "${eventId}":`, e);
+		return resolveEventCopy(null);
+	}
+}
+
 export async function getEventMilestones(eventId: string): Promise<any[]> {
 	try {
 		const { data } = await supabaseServer
 			.from('eventgage_events')
-			.select('config')
+			.select('slug, config')
 			.eq('id', eventId)
 			.maybeSingle();
 
 		if (Array.isArray(data?.config?.milestones) && data.config.milestones.length > 0) {
 			return data.config.milestones;
 		}
+		if (data) return resolveEventCopy(data as any).milestones_fallback;
 	} catch (e) {
 		console.error(`[eventService] Error obteniendo hitos para evento "${eventId}":`, e);
 	}
@@ -1987,9 +2034,9 @@ function checkAndApplyMilestones(avatar: any, status: any, milestoneList: any[] 
 	return reached;
 }
 
-function formatMilestoneMessages(milestones: any[]): string {
+function formatMilestoneMessages(milestones: any[], currencyIcon: string = '💠'): string {
 	return milestones
-		.map((m) => `🏆 ¡Hito ${m.count} alcanzado! Rango: ${m.rankTitle}. +${m.xp} XP${m.cp ? `, +${m.cp} 💠` : ''}${m.spBonus ? `, +${m.spBonus} SP` : ''}. ${m.lore}`)
+		.map((m) => `🏆 ¡Hito ${m.count} alcanzado! Rango: ${m.rankTitle}. +${m.xp} XP${m.cp ? `, +${m.cp} ${currencyIcon}` : ''}${m.spBonus ? `, +${m.spBonus} SP` : ''}. ${m.lore}`)
 		.join(' ');
 }
 
@@ -2132,16 +2179,18 @@ async function resolveDiceCheck(userId: string, eventId: string, player: any, st
 		: undefined;
 
 	const milestonesReached = await applyMissionCompletion(userId, eventId, player, status, mission, xpReward, cpReward, journalEntry);
+	const copy = await getServerEventCopy(eventId);
+	const icon = player.avatar?.cp?.icon || copy.currency_icon;
 
 	const impact = mission.mechanic?.faction_impact || { success: 1, fail: 0 };
 	const delta = checkSuccess ? (impact.success ?? 1) : (impact.fail ?? 0);
 	if (delta) await incrementFactionPoints(eventId, player.avatar?.faction_id, delta);
-	// Inercia Global es ±1 fijo por resultado (sección 1.3.3 del GDD), NO un
-	// espejo del delta de facción: el fallo por defecto da 0 puntos a la
-	// facción pero SIGUE sumando +1 a la Inercia ("0 puntos a la Facción →
-	// +1 punto a la Inercia Global" — son reglas independientes, no un
-	// mismo número con signo invertido).
-	await adjustWorldPoints(eventId, checkSuccess ? -1 : 1);
+	// El medidor mundial se mueve un delta fijo por resultado (Gamescon:
+	// Inercia ±1, sección 1.3.3 del GDD), NO un espejo del delta de facción:
+	// el fallo por defecto da 0 puntos a la facción pero SIGUE moviendo el
+	// medidor — son reglas independientes. Dirección configurable por evento
+	// en copy.world_meter.
+	await adjustWorldPoints(eventId, checkSuccess ? copy.world_meter.on_success : copy.world_meter.on_fail);
 
 	trackAnalyticsEvent(eventId, userId, 'dice_check_rolled', 'mechanic', {
 		mission_id: mission.id,
@@ -2166,7 +2215,7 @@ async function resolveDiceCheck(userId: string, eventId: string, player: any, st
 
 	const boostNote = spBoostApplied ? ' (con Sobrecarga de Atributo: +2 SP)' : '';
 	const commNote = mission.mechanic?.unlock_communication ? ' Revisa la comunicación entrante en el HUD para continuar.' : '';
-	const baseMsg = `🎲 Tirada: ${roll} + ${modifier} (${attribute}) = ${total} vs DC ${dc}${boostNote}. ${checkSuccess ? '¡Éxito! Tu facción avanza.' : 'Fallo — la Inercia se resiste, pero el intento cuenta.'} +${xpReward} XP, +${cpReward} 💠.${commNote}`;
+	const baseMsg = `🎲 Tirada: ${roll} + ${modifier} (${attribute}) = ${total} vs DC ${dc}${boostNote}. ${checkSuccess ? copy.messages.dice_success : copy.messages.dice_fail} +${xpReward} XP, +${cpReward} ${icon}.${commNote}`;
 
 	return {
 		success: true,
@@ -2177,7 +2226,7 @@ async function resolveDiceCheck(userId: string, eventId: string, player: any, st
 		dc,
 		attribute,
 		milestonesReached,
-		message: milestonesReached.length ? `${baseMsg} ${formatMilestoneMessages(milestonesReached)}` : baseMsg,
+		message: milestonesReached.length ? `${baseMsg} ${formatMilestoneMessages(milestonesReached, icon)}` : baseMsg,
 		playerState: player
 	};
 }
@@ -2222,11 +2271,12 @@ export async function retryDiceCheck(userId: string, eventId: string, missionId:
 		const impact = mission.mechanic?.faction_impact || { success: 1, fail: 0 };
 		const delta = impact.success ?? 1;
 		if (delta) await incrementFactionPoints(eventId, player.avatar?.faction_id, delta);
-		// Flat -1, igual que cualquier otro éxito (ver resolveDiceCheck) — el
-		// +1 que ya sumó el fallo original no se "deshace" con un -2, el
-		// reintento exitoso solo aplica la reducción estándar de un acierto.
-		await adjustWorldPoints(eventId, -1);
-		factionMsg = ' Tu facción avanza y la Inercia retrocede.';
+		// Mismo delta que cualquier otro éxito (ver resolveDiceCheck) — lo que
+		// ya sumó el fallo original no se "deshace", el reintento exitoso solo
+		// aplica el movimiento estándar de un acierto.
+		const retryCopy = await getServerEventCopy(eventId);
+		await adjustWorldPoints(eventId, retryCopy.world_meter.on_success);
+		factionMsg = ` ${retryCopy.messages.dice_retry_success}`;
 	} else {
 		factionMsg = ' Sin suerte esta vez tampoco — tu Ficha de Reintento ya se usó.';
 	}
@@ -2493,18 +2543,24 @@ async function resolveTriviaQuiz(userId: string, eventId: string, player: any, s
 		: undefined;
 
 	const milestonesReached = await applyMissionCompletion(userId, eventId, player, status, mission, xpReward, cpReward, journalEntry);
+	const copy = await getServerEventCopy(eventId);
+	const icon = player.avatar?.cp?.icon || copy.currency_icon;
 
 	const impact = mission.mechanic?.faction_impact || { success: 1, fail: 0 };
 	const delta = correct ? (impact.success ?? 1) : (impact.fail ?? 0);
 	if (delta) await incrementFactionPoints(eventId, player.avatar?.faction_id, delta);
-	// Flat ±1 (ver nota en resolveDiceCheck): un fallo da 0 a la facción pero
-	// SIGUE sumando a la Inercia, no es un espejo del delta de facción.
-	await adjustWorldPoints(eventId, correct ? -1 : 1);
+	// Delta fijo por resultado (ver nota en resolveDiceCheck): un fallo da 0
+	// a la facción pero SIGUE moviendo el medidor mundial.
+	await adjustWorldPoints(eventId, correct ? copy.world_meter.on_success : copy.world_meter.on_fail);
 
+	// Cada misión puede traer su propio copy de acierto/fallo (p.ej. un dato
+	// curioso del juego del stand); si no, el genérico del evento.
+	const correctText = mission.mechanic?.correct_message || copy.messages.trivia_correct;
+	const wrongText = mission.mechanic?.wrong_message || copy.messages.trivia_wrong;
 	const commNote = mission.mechanic?.unlock_communication ? ' Revisa la comunicación entrante en el HUD para continuar.' : '';
 	const baseMsg = (correct
-		? `¡Correcto! Desmontaste el mito. +${xpReward} XP, +${cpReward} 💠.`
-		: `No era esa — pero el intento también cuenta. +${xpReward} XP, +${cpReward} 💠.`) + commNote;
+		? `${correctText} +${xpReward} XP, +${cpReward} ${icon}.`
+		: `${wrongText} +${xpReward} XP, +${cpReward} ${icon}.`) + commNote;
 
 	trackAnalyticsEvent(eventId, userId, 'trivia_answered', 'mechanic', {
 		mission_id: mission.id,
@@ -2525,7 +2581,7 @@ async function resolveTriviaQuiz(userId: string, eventId: string, player: any, s
 		correct,
 		correctOptionId: options.find((o: any) => o.correct === true)?.id,
 		milestonesReached,
-		message: milestonesReached.length ? `${baseMsg} ${formatMilestoneMessages(milestonesReached)}` : baseMsg,
+		message: milestonesReached.length ? `${baseMsg} ${formatMilestoneMessages(milestonesReached, icon)}` : baseMsg,
 		playerState: player
 	};
 }
@@ -2580,7 +2636,8 @@ async function resolveAiPromptChallenge(userId: string, eventId: string, player:
 	if (delta) await incrementFactionPoints(eventId, player.avatar?.faction_id, delta);
 	// Flat ±1 (ver nota en resolveDiceCheck): la evaluación baja igual suma a
 	// la Inercia aunque no otorgue punto de facción.
-	await adjustWorldPoints(eventId, evaluation.xp_awarded >= 25 ? -1 : 1);
+	const aiCopy = await getServerEventCopy(eventId);
+	await adjustWorldPoints(eventId, evaluation.xp_awarded >= 25 ? aiCopy.world_meter.on_success : aiCopy.world_meter.on_fail);
 
 	// Feed Comunitario: solo evaluaciones GENUINAS de GIOCCHI (no el fallback
 	// offline, que siempre da 25 XP fijos sin importar la calidad real de la
@@ -2748,7 +2805,7 @@ export async function softResetPlayerProgress(userId: string, eventId: string) {
 		...player.avatar,
 		xp: { points: 0, level: 1 },
 		rank: 1,
-		rank_title: 'Recluta de la Red'
+		rank_title: (await getServerEventCopy(eventId)).rank_default
 	};
 
 	try {

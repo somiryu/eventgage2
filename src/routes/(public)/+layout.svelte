@@ -14,7 +14,7 @@
 	.public-shell {
 		min-height: 100vh;
 		width: 100%;
-		background: #05070d;
+		background: var(--bg-app, #05070d);
 		color: #e2e8f0;
 		font-family: system-ui, -apple-system, sans-serif;
 	}

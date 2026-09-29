@@ -26,12 +26,15 @@ import { parseSignedSession } from '$lib/server/session';
 const PAGE_SYSTEM_ERROR_MESSAGE =
 	'No logramos establecer el enlace con la Agencia — puede ser una interferencia temporal de red. Recarga la página en unos segundos, Agente.';
 
-export const load: PageServerLoad = async ({ params, cookies }) => {
+export const load: PageServerLoad = async ({ params, cookies, url }) => {
 	const sessionCookie = cookies.get('eventgage_session');
 	const user = parseSignedSession<{ id: string; email: string; full_name: string }>(sessionCookie);
 
 	if (!user) {
-		throw redirect(302, `/register?event=${params.event_slug}&redirect=/${params.event_slug}`);
+		// Se conserva la query (p.ej. `?code=` de un QR de stand) para que el
+		// canje ocurra apenas el jugador termine de registrarse.
+		const back = encodeURIComponent(`/${params.event_slug}${url.search}`);
+		throw redirect(302, `/register?event=${params.event_slug}&redirect=${back}`);
 	}
 
 	try {

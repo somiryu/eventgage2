@@ -15,6 +15,14 @@
 				Ingresar a /gamescon
 			</button>
 		</div>
+
+		<div class="demo-box">
+			<h3>Demo SOFA</h3>
+			<p>Recorre las 15 guaridas de <strong>La Ruta del Dragón</strong>.</p>
+			<button class="launch-btn" onclick={() => goto('/ruta-dragon')}>
+				Ingresar a /ruta-dragon
+			</button>
+		</div>
 	</div>
 </div>
 

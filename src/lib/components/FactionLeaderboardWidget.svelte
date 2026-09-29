@@ -17,6 +17,9 @@
 		onFactionClick?: (factionId: string) => void;
 		title?: string;
 		showRefresh?: boolean;
+		// Color de identidad por id de facción (config.faction_colors del
+		// evento); si falta, se usa la paleta por posición de siempre.
+		colors?: Record<string, string>;
 	}
 
 	let {
@@ -26,13 +29,15 @@
 		onRefresh,
 		onFactionClick,
 		title = 'GREMIOS',
-		showRefresh = true
+		showRefresh = true,
+		colors = {}
 	}: Props = $props();
 
 	const FACTION_COLORS = ['#22d3ee', '#f472b6', '#fb923c', '#a78bfa'];
 
 	function factionColor(idx: number): string {
-		return FACTION_COLORS[idx % FACTION_COLORS.length];
+		const id = factions[idx]?.id;
+		return (id && colors[id]) || FACTION_COLORS[idx % FACTION_COLORS.length];
 	}
 
 	const rankedFactions = $derived(
@@ -76,7 +81,7 @@
 
 <style>
 	.point-card {
-		background: rgba(30, 41, 59, 0.6);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-lg, 12px);
 		padding: 0.75rem 1rem;

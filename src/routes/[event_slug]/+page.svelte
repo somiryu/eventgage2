@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { goto, replaceState, afterNavigate } from '$app/navigation';
 	import { dev } from '$app/environment';
 	import {
 		audioSettings,
@@ -53,16 +53,27 @@
 	import { subscribeToEventActivity } from '$lib/client/supabaseClient';
 	import DiceCheckRoll from '$lib/components/DiceCheckRoll.svelte';
 	import FactionLeaderboardWidget from '$lib/components/FactionLeaderboardWidget.svelte';
+	import RoutePassport from '$lib/components/RoutePassport.svelte';
+	import Stamp from '@lucide/svelte/icons/stamp';
+	import { resolveEventCopy, resolveEventTheme, fillTemplate, missionTypeLabel } from '$lib/eventCopy';
 
 	const { data } = $props();
+
+	// Copy narrativo del evento (lexicón, onboarding, guía, personajes) — ver
+	// src/lib/eventCopy.ts. Nada del lore de un evento vive en este archivo.
+	const copy = $derived(resolveEventCopy(data.event));
+	const eventTheme = $derived(resolveEventTheme(data.event));
+	const customSkills = $derived(data.event?.config?.skills);
+	// Pasaporte de ruta (config.passport): si el evento lo define, la pestaña
+	// de inventario se presenta como pasaporte de paradas.
+	const passportConfig = $derived(data.event?.config?.passport || null);
 
 	// Mensaje único y honesto para cualquier fallo de infraestructura — nunca
 	// se reusa el copy de validación ("código incorrecto", etc.) para esto.
 	// Coincide en tono con SYSTEM_ERROR_MESSAGE del servidor; se usa acá solo
 	// como último recurso si la respuesta no trae su propio mensaje (p.ej. sin
 	// conexión de red en absoluto, donde ni siquiera hay respuesta del servidor).
-	const SYSTEM_ERROR_FALLBACK =
-		'Cipher perdió la señal con el sistema central. No es tu código ni tu respuesta — reintenta en unos segundos.';
+	const SYSTEM_ERROR_FALLBACK = $derived(copy.system_error);
 
 	// Estado local reactivo
 	let activeTab = $state<'hud' | 'missions' | 'items' | 'map' | 'feed' | 'profile'>('hud');
@@ -118,19 +129,19 @@
 			return `¡Toda la comunidad desbloqueó "${entry.payload?.itemName}"!`;
 		}
 		if (entry.type === 'contact_scanned') {
-			return `${entry.payload?.scannerName || 'Un agente'} sumó un nuevo contacto a su red.`;
+			return `${entry.payload?.scannerName || copy.player_noun_indef} sumó un nuevo contacto a su red.`;
 		}
 		if (entry.type === 'milestone_reached') {
-			return `🏆 ${entry.payload?.playerName || 'Un agente'} alcanzó el Rango "${entry.payload?.rankTitle}".`;
+			return `🏆 ${entry.payload?.playerName || copy.player_noun_indef} alcanzó el Rango "${entry.payload?.rankTitle}".`;
 		}
 		if (entry.type === 'faction_lead_change') {
 			return `⚡ ¡${entry.payload?.factionName} tomó la delantera!`;
 		}
 		if (entry.type === 'ai_prompt_highlight') {
-			return `✨ ${entry.payload?.playerName || 'Un agente'} recibió una evaluación destacada de GIOCCHI en "${entry.payload?.missionTitle}".`;
+			return `✨ ${entry.payload?.playerName || copy.player_noun_indef} recibió una evaluación destacada de GIOCCHI en "${entry.payload?.missionTitle}".`;
 		}
 		if (entry.type === 'treaty_signed') {
-			return `🏛️ ${entry.payload?.playerName || 'Un agente'} firmó el Tratado Huizinga.`;
+			return fillTemplate(copy.feed_treaty_signed, { name: entry.payload?.playerName || copy.player_noun_indef });
 		}
 		if (entry.type === 'gm_alert') {
 			return entry.payload?.message || 'Transmisión del Game Master.';
@@ -870,8 +881,10 @@
 	// usados con otro significado (verde=éxito, rojo=error, ámbar=Hito,
 	// índigo=acción del jugador) para no generar confusión semántica.
 	const FACTION_COLORS = ['#22d3ee', '#f472b6', '#fb923c', '#a78bfa'];
+	const factionColorsConfig = $derived<Record<string, string>>(data.event?.config?.faction_colors || {});
 	function factionColor(idx: number): string {
-		return FACTION_COLORS[idx % FACTION_COLORS.length];
+		const id = factionsState[idx]?.id;
+		return (id && factionColorsConfig[id]) || FACTION_COLORS[idx % FACTION_COLORS.length];
 	}
 	const ownFactionIndex = $derived(
 		factionsState.findIndex((f: any) => f.id === player?.avatar?.faction_id)
@@ -907,17 +920,8 @@
 	);
 
 	// Niveles dinámicos cargados de la base de datos (bem.eventgage_event_levels)
-	const defaultLevelsFallback = [
-		{ id: 'lvl_1', level: 1, xp_required: 0, title: 'Recluta Inicial' },
-		{ id: 'lvl_2', level: 2, xp_required: 200, title: 'Agente Calibrado' },
-		{ id: 'lvl_3', level: 3, xp_required: 500, title: 'Agente Activo' },
-		{ id: 'lvl_4', level: 4, xp_required: 900, title: 'Agente Veterano' },
-		{ id: 'lvl_5', level: 5, xp_required: 1400, title: 'Especialista de Élite' },
-		{ id: 'lvl_6', level: 6, xp_required: 2000, title: 'Estratega Mayor' },
-		{ id: 'lvl_7', level: 7, xp_required: 2600, title: 'Maestro Huizinga' }
-	];
 	const eventLevels = $derived<Array<{ id: string; level: number; xp_required: number; title: string; unlocks?: any }>>(
-		data.levels && data.levels.length > 0 ? data.levels : defaultLevelsFallback
+		data.levels && data.levels.length > 0 ? data.levels : copy.levels_fallback
 	);
 
 	const currentLevelInfo = $derived.by(() => {
@@ -948,13 +952,7 @@
 	});
 
 	// Progreso hacia el próximo Hito (Configurable por evento desde data.event.config.milestones)
-	const defaultMilestonesFallback = [
-		{ count: 3, xp: 100, cp: 1, spBonus: 2, rank: 2, rankTitle: 'Agente de Campo', lore: 'Acceso prioritario a la Bóveda de Inteligencia.' },
-		{ count: 6, xp: 120, cp: 2, spBonus: 2, rank: 3, rankTitle: 'Especialista Táctico', unlockItem: 'item_llave_boveda_prime', lore: 'Obtuviste la Llave Criptográfica PRIME.' },
-		{ count: 9, xp: 140, cp: 2, spBonus: 2, rank: 4, rankTitle: 'Estratega de Enlace', lore: 'Se desclasifican las cláusulas del Tratado Huizinga.' },
-		{ count: 12, xp: 150, cp: 0, spBonus: 0, rank: 5, rankTitle: 'Agente Master Huizinga', lore: 'Consagración de honor al cierre del evento.' }
-	];
-	const eventMilestones = $derived<any[]>(data.event?.config?.milestones || defaultMilestonesFallback);
+	const eventMilestones = $derived<any[]>(data.event?.config?.milestones || copy.milestones_fallback);
 	const MILESTONE_THRESHOLDS = $derived<number[]>(eventMilestones.map((m: any) => m.count));
 	const completedMissionsCount = $derived(player?.game_status?.completed_missions?.length || 0);
 	const nextMilestoneObj = $derived(eventMilestones.find((m: any) => m.count > completedMissionsCount) || null);
@@ -983,63 +981,59 @@
 	// en vez de pesar igual que un medidor pasivo como Inercia Global.
 	const milestoneImminent = $derived(nextMilestone !== null && nextMilestone - completedMissionsCount === 1);
 
-	// --- Narrativa de Onboarding: 4 Actos + Modal de Cipher (secciones 5 y 7 del
-	// diseño). Es lore específico de Gamescon, así que todo esto solo se activa
-	// cuando el evento es 'gamescon' — el evento demo no se ve afectado.
+	// --- Narrativa de Onboarding (N actos) + Modal de bienvenida del guía.
+	// El contenido viene de copy.onboarding / copy.welcome_modal (ver
+	// src/lib/eventCopy.ts): un evento sin onboarding definido no lo muestra.
 	let narrativeActIndex = $state(0);
+
+	// Canje por URL (`/evento?code=XXXX`, el QR impreso de cada stand): se lee
+	// una sola vez, se quita de la barra de direcciones para que recargar no
+	// lo repita, y se canjea en cuanto el jugador ya tiene avatar y no está
+	// viendo la narrativa inicial.
+	// replaceState solo se puede llamar cuando el router de SvelteKit terminó
+	// de inicializarse — en la carga inicial, afterNavigate corre ANTES de
+	// eso, así que la limpieza de la URL se difiere un tick. Si aun así
+	// fallara, no pasa nada grave: recargar solo mostraría "ya canjeaste".
+	let pendingUrlCode = $state<string | null>(null);
+	afterNavigate(({ to }) => {
+		const code = to?.url.searchParams.get('code');
+		if (!code) return;
+		pendingUrlCode = code.trim().toUpperCase();
+		const clean = new URL(to!.url);
+		clean.searchParams.delete('code');
+		setTimeout(() => {
+			try {
+				replaceState(clean, page.state);
+			} catch (e) {
+				console.warn('No se pudo limpiar ?code= de la URL:', e);
+			}
+		}, 0);
+	});
 	let showCipherWelcomeModal = $state(false);
 
-	const NARRATIVE_ACT1 =
-		'"Identidad confirmada, Agente. Si estás leyendo esta transmisión, tu credencial ha sido validada dentro de la Agencia Antropológica Huizinga. Durante años hemos operado en las sombras, analizando cómo el diseño lúdico y la ciencia del comportamiento pueden transformar organizaciones enteras, mientras el mundo exterior sigue creyendo que la gamificación es solo acumular puntos sin sentido."';
-
-	const NARRATIVE_ACT2 =
-		'"El Sindicato de la Inercia ha infectado nuestras instituciones con burocracia, capacitaciones invisibles y fórmulas vacías. Durante este congreso, tu misión es infiltrarte en los pasillos, recuperar fragmentos de datos (Databits) y derribar mitos en tiempo real. Todo lo que recolectes nos preparará para el despliegue decisivo: al cierre del congreso, donde ejecutaremos la intervención central y definiremos el nuevo estándar del aprendizaje interactivo."';
-
-	const NARRATIVE_ACT3_BY_AVATAR: Record<string, string> = {
-		avatar_disenador_conductual:
-			'"Tu mente analítica es nuestra mayor ventaja, Agente. Tu objetivo es desmantelar las trampas de sesgo y demostrar con métricas y ciencia del comportamiento que el compromiso humano no es un accidente, sino un sistema predecible y medible. Vigila los datos y optimiza cada decisión."',
-		avatar_arquitecto_experiencias:
-			'"Necesitamos tu visión estética y espacial, Agente. Tu objetivo es transformar dinámicas aburridas en viajes memorables. Diseña las narrativas, tensiona las interfaces y asegúrate de que cada punto de contacto despierte curiosidad genuina en lugar de apatía."',
-		avatar_facilitador_sistemico:
-			'"Las personas son el núcleo de esta red, Agente. Tu objetivo es tender puentes entre las facciones, activar el cambio cultural y romper la resistencia humana ante nuevas formas de aprender y colaborar. La cohesión del equipo descansa en tu liderazgo."',
-		avatar_director_estrategico:
-			'"Tú ves el panorama completo y el valor real del negocio, Agente. Tu objetivo es alinear cada mecánica con los objetivos institucionales de alto nivel, blindando el retorno de inversión y asegurando que nuestras soluciones tengan impacto ejecutivo sostenible."'
-	};
-
-	const NARRATIVE_ACT4_BY_FACTION: Record<string, string> = {
-		fac_aprendizaje_activo:
-			'"Has sido asignado a la División de Aprendizaje Activo. Tu frente de batalla es el aula, el taller y el auditorio. Tu objetivo prioritario es erradicar el \'Sabotaje del Formulario Invisible\': transformar la capacitación pasiva en dominio real. Haz que cada concepto sea vivido y dominado."',
-		fac_impacto_valor:
-			'"Te has integrado a la División de Impacto & Valor. Tu frente de batalla es la percepción, la lealtad y el posicionamiento. Tu misión prioritaria es derribar el \'Sabotaje de la Medalla Vacía\': demostrar que el engagement no se regala ni se compra, se conquista con experiencias memorables y auténticas."',
-		fac_agilidad_autonomia:
-			'"Operas ahora bajo la División de Agilidad & Autonomía. Tu frente de batalla son los procesos, la experimentación y el producto. Tu misión prioritaria es quebrar el \'Sabotaje de la Parálisis Creativa\': empoderar a los equipos para prototipar rápido, aprender del error y desatar la innovación sin pedir permiso a la burocracia."'
-	};
+	const narrativeActs = $derived(copy.onboarding?.acts || []);
+	const narrativeActCount = $derived(narrativeActs.length);
+	const currentNarrativeAct = $derived(narrativeActIndex > 0 ? narrativeActs[narrativeActIndex - 1] : null);
 
 	const currentNarrativeText = $derived.by(() => {
-		if (narrativeActIndex === 1) return NARRATIVE_ACT1;
-		if (narrativeActIndex === 2) return NARRATIVE_ACT2;
-		if (narrativeActIndex === 3) {
-			return NARRATIVE_ACT3_BY_AVATAR[player?.avatar?.avatar_id] || NARRATIVE_ACT3_BY_AVATAR.avatar_disenador_conductual;
-		}
-		if (narrativeActIndex === 4) {
-			return NARRATIVE_ACT4_BY_FACTION[player?.avatar?.faction_id] || NARRATIVE_ACT4_BY_FACTION.fac_aprendizaje_activo;
-		}
-		return '';
+		const act = currentNarrativeAct;
+		if (!act) return '';
+		return (
+			act.by_avatar?.[player?.avatar?.avatar_id] ||
+			act.by_faction?.[player?.avatar?.faction_id] ||
+			act.text
+		);
 	});
 
-	const narrativeActLabel = $derived.by(() => {
-		if (narrativeActIndex === 2) return 'La Amenaza & La Sesión de Cierre';
-		if (narrativeActIndex === 3) return 'Directiva del Rol';
-		if (narrativeActIndex === 4) return 'Directiva de Frente de Batalla';
-		return 'Bienvenida a la Red Huizinga';
-	});
+	const narrativeActLabel = $derived(currentNarrativeAct?.label || '');
 
-	// Dispara la narrativa una sola vez, solo en Gamescon, solo si el jugador
-	// (ya con avatar) todavía no la ha visto — nunca bloquea a quien vuelve a entrar.
+	// Dispara la narrativa una sola vez, solo si el evento tiene onboarding y
+	// el jugador (ya con avatar) todavía no la ha visto — nunca bloquea a
+	// quien vuelve a entrar.
 	$effect(() => {
 		if (
 			player &&
-			data.event?.slug === 'gamescon' &&
+			narrativeActCount > 0 &&
 			!player.game_status?.narrative_seen &&
 			narrativeActIndex === 0 &&
 			!showCipherWelcomeModal
@@ -1082,7 +1076,7 @@
 			completeTypewriter();
 			return;
 		}
-		if (narrativeActIndex < 4) {
+		if (narrativeActIndex < narrativeActCount) {
 			narrativeActIndex++;
 		} else {
 			finishNarrative();
@@ -1091,7 +1085,7 @@
 
 	async function finishNarrative() {
 		narrativeActIndex = 0;
-		showCipherWelcomeModal = true;
+		showCipherWelcomeModal = !!copy.welcome_modal;
 		if (player?.game_status) player.game_status.narrative_seen = true;
 		try {
 			await fetch(`/api/event/${data.event.slug}`, {
@@ -1112,20 +1106,22 @@
 		showCipherWelcomeModal = false;
 	}
 
-	// Mensaje persistente de Cipher en el Canal del GM, según progreso real
-	// del jugador (secciones 7.3, 7.4 y 8.3 del diseño) — no es un diálogo
-	// estático de base de datos, cambia con lo que el jugador ya hizo.
+	// Mensaje persistente del guía (copy.guide) en el Canal del GM, según
+	// progreso real del jugador — la primera directiva cuya condición se
+	// cumple gana; si ninguna, fallback_text. No es un diálogo estático de
+	// base de datos, cambia con lo que el jugador ya hizo.
 	const cipherPersistentMessage = $derived.by(() => {
+		const guide = copy.guide;
+		if (!guide) return '';
 		const status = player?.game_status || {};
-		const redeemedLudens = (status.redeemed_codes || []).includes('LUDENS');
-		const m01Completed = (status.completed_missions || []).includes('m01_giocchi_calibration');
-		if (m01Completed) {
-			return '¡Excelente calibración! El análisis de GIOCCHI ya está guardado en tu Bitácora. Ahora es momento de entrar en acción: acércate a uno de los Game Masters PRIME en los pasillos para recibir códigos de misión, o encuentra pistas físicas en el recinto para continuar desclasificando el sistema.';
+		const completed: string[] = status.completed_missions || [];
+		const redeemed: string[] = status.redeemed_codes || [];
+		for (const d of guide.directives || []) {
+			if (d.if_completed_mission && completed.includes(d.if_completed_mission)) return d.text;
+			if (typeof d.if_completed_count_gte === 'number' && completed.length >= d.if_completed_count_gte) return d.text;
+			if (d.if_redeemed_code && redeemed.includes(d.if_redeemed_code)) return d.text;
 		}
-		if (redeemedLudens) {
-			return '¡Terminal sincronizada! Revisa tu pestaña de Misiones: GIOCCHI, nuestra IA de inteligencia táctica, te espera para calibrar tus sensores.';
-		}
-		return 'Usa el código LUDENS en el panel de códigos para activar el sistema y desbloquear la Misión 1.';
+		return guide.fallback_text || '';
 	});
 
 	// Notificación de Cipher (2.x, SFX restantes): suena cuando el mensaje
@@ -1145,33 +1141,8 @@
 		lastCipherMessage = msg;
 	});
 
-	// Biografías y roles oficiales de los personajes de Gamescon para el modal informativo:
-	const CHARACTER_BIOS: Record<string, { role: string; bio: string }> = {
-		char_cipher: {
-			role: 'Soporte Táctico y Telecomunicaciones de la Red',
-			bio: 'Enlace principal de campo en EQUAA. Administra las frecuencias seguras, la telemetría de las terminales y guía a los agentes en la decodificación de pistas físicas y enlace con los Game Masters.'
-		},
-		char_huizinga: {
-			role: 'Directora de la Agencia Antropológica Huizinga',
-			bio: 'Líder visionaria de la Agencia. Especialista en la teoría del Círculo Mágico y el diseño de entornos seguros de aprendizaje donde el error es un checkpoint de maestría (Fail Smart).'
-		},
-		char_siobhan: {
-			role: 'Antropóloga Conductual Senior & Jefa de Modelado BEM',
-			bio: 'Pionera en la arquitectura de incentivos formativos y bucles de retroalimentación inmediata (Loop GFR). Diseña sistemas para potenciar la motivación intrínseca y evitar la fatiga cognitiva.'
-		},
-		char_marcus: {
-			role: 'Jefe de Operaciones Tácticas & Contramedidas de Inercia',
-			bio: 'Auditor implacable de sistemas. Especialista en desarticular la Inercia Corporativa, patrones oscuros de manipulación y tablas de líderes tóxicas que destruyen el clima colaborativo.'
-		},
-		char_kaelen: {
-			role: 'Especialista en Infiltración & Auditoría de Métricas Ocultas',
-			bio: 'Estratega de operaciones de campo. Experto en economía narrativa, alineación de facciones y dinámicas de interdependencia positiva donde cada rol del equipo es indispensable.'
-		},
-		char_giocchi: {
-			role: 'Núcleo de Inteligencia Artificial & Calibración Conceptual',
-			bio: 'Inteligencia Artificial táctica entrenada en los principios de la metodología BEM. Evalúa las reflexiones de los agentes en tiempo real y calibra su perspectiva crítica.'
-		}
-	};
+	// Biografías y roles de los personajes del evento para el modal informativo.
+	const CHARACTER_BIOS = $derived<Record<string, { role: string; bio: string }>>(copy.character_bios || {});
 
 	interface CommunicationItem {
 		id: string;
@@ -1199,9 +1170,9 @@
 		const bioInfo = comm.character_id ? CHARACTER_BIOS[comm.character_id] : null;
 		selectedCharacterModal = {
 			name: comm.speaker_name,
-			role: comm.speaker_role || char?.role || bioInfo?.role || 'Enlace de la Agencia',
+			role: comm.speaker_role || char?.role || bioInfo?.role || copy.organization_name,
 			portrait_url: comm.portrait_url,
-			bio: comm.speaker_bio || bioInfo?.bio || char?.role || 'Miembro oficial de la Agencia Antropológica Huizinga desplegado en la convención.',
+			bio: comm.speaker_bio || bioInfo?.bio || char?.role || `Miembro oficial de ${copy.organization_name}.`,
 			badge: comm.badge
 		};
 		playModalOpen();
@@ -1223,10 +1194,10 @@
 			list.push({
 				id: comm.id,
 				character_id: comm.character_id,
-				speaker_name: char?.name || 'Operador Cipher',
-				speaker_role: char?.role || bioInfo?.role || 'Soporte Táctico y Telecomunicaciones',
-				speaker_bio: bioInfo?.bio || char?.role || 'Enlace operativo de la Agencia.',
-				portrait_url: char?.portrait_url || '/images/gamescon/characters/char_cipher.jpg',
+				speaker_name: char?.name || copy.guide?.name || copy.story_speaker.name,
+				speaker_role: char?.role || bioInfo?.role || copy.guide?.role || copy.story_speaker.role,
+				speaker_bio: bioInfo?.bio || char?.role || copy.guide?.bio || '',
+				portrait_url: char?.portrait_url || copy.guide?.portrait_url || null,
 				badge: comm.badge || 'DIRECTIVA DE CAMPO',
 				badge_type: comm.badge_type || 'tactical',
 				text: comm.text
@@ -1234,14 +1205,14 @@
 		}
 
 		// 2. Directiva Táctica Base de Cipher (Tutorial / Fallback si no hay directivas de campo activas):
-		if (list.length === 0 && cipherPersistentMessage) {
+		if (list.length === 0 && cipherPersistentMessage && copy.guide) {
 			list.push({
 				id: 'cipher_tactical_directive',
-				character_id: 'char_cipher',
-				speaker_name: 'Operador Cipher',
-				speaker_role: CHARACTER_BIOS.char_cipher.role,
-				speaker_bio: CHARACTER_BIOS.char_cipher.bio,
-				portrait_url: '/images/gamescon/characters/char_cipher.jpg',
+				character_id: copy.guide.character_id,
+				speaker_name: copy.guide.name,
+				speaker_role: copy.guide.role,
+				speaker_bio: copy.guide.bio,
+				portrait_url: copy.guide.portrait_url,
 				badge: 'DIRECTIVA DE MISIÓN',
 				badge_type: 'tactical',
 				text: cipherPersistentMessage
@@ -1256,10 +1227,10 @@
 			list.push({
 				id: d.id,
 				character_id: d.character_id,
-				speaker_name: char?.name || d.speaker_name || 'Dra. Elena Huizinga',
+				speaker_name: char?.name || d.speaker_name || copy.story_speaker.name,
 				speaker_role: char?.role || bioInfo?.role || 'Transmisión Oficial',
-				speaker_bio: bioInfo?.bio || char?.role || 'Transmisión oficial de la Agencia.',
-				portrait_url: char?.portrait_url || d.portrait_url || '/images/gamescon/characters/char_huizinga.jpg',
+				speaker_bio: bioInfo?.bio || char?.role || `Transmisión oficial de ${copy.organization_name}.`,
+				portrait_url: char?.portrait_url || d.portrait_url || copy.story_speaker.portrait_url,
 				badge: d.title || 'TRANSMISIÓN DE HISTORIA',
 				badge_type: 'story',
 				text: d.text
@@ -1328,6 +1299,14 @@
 	}
 
 	// Canjear Código
+	$effect(() => {
+		if (pendingUrlCode && player && narrativeActIndex === 0 && !showCipherWelcomeModal && !submittingCode) {
+			const code = pendingUrlCode;
+			pendingUrlCode = null;
+			handleCodeSubmit(code);
+		}
+	});
+
 	async function handleCodeSubmit(codeToSubmit?: string) {
 		const targetCode = codeToSubmit || codeInput;
 		if (!targetCode || submittingCode) return;
@@ -1677,7 +1656,7 @@
 	async function handleResetPlayer() {
 		if (!dev || resetting) return;
 		const confirmed = window.confirm(
-			'Esto borra TODO el progreso de este agente (rango, XP, Ludens, ítems, Hitos) y EL AVATAR, volviendo a la selección de facción. ¿Reiniciar por completo?'
+			`Esto borra TODO el progreso (rango, XP, ${copy.currency_name}, ítems, Hitos) y EL AVATAR, volviendo a la selección de facción. ¿Reiniciar por completo?`
 		);
 		if (!confirmed) return;
 		resetting = true;
@@ -1735,6 +1714,17 @@
 	}
 </script>
 
+<svelte:head>
+	<title>{data.event?.title || 'Eventgage'}</title>
+	{#if eventTheme.fontHref}
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="stylesheet" href={eventTheme.fontHref} />
+	{/if}
+	{#if eventTheme.css}
+		{@html `<style>${eventTheme.css}</style>`}
+	{/if}
+</svelte:head>
+
 <!-- handleKeyDown ya comprueba `dev` internamente; svelte:window no puede ir dentro de un {#if} -->
 <svelte:window onkeydown={handleKeyDown} />
 
@@ -1747,10 +1737,10 @@
 
 			{#if onboardingStep === 1}
 				<!-- PASO 1: ELECCIÓN DE FACCIÓN -->
-				<p class="subtitle">Elige la facción a la que pertenecerá tu agente durante el evento.</p>
+				<p class="subtitle">{copy.wizard.faction_prompt}</p>
 				<fieldset disabled={joining} class="selection-fieldset">
 					<div class="step-section">
-						<h3>Selecciona tu Facción</h3>
+						<h3>{copy.wizard.faction_title}</h3>
 						<div class="grid-options">
 							{#each data.factions as f}
 								<button
@@ -1774,12 +1764,12 @@
 						onclick={() => (onboardingStep = 2)}
 						disabled={!selectedFactionId}
 					>
-						<span>Siguiente: Elegir Avatar (Clase) ➔</span>
+						<span>{copy.wizard.next_to_avatar}</span>
 					</button>
 				</fieldset>
 			{:else if onboardingStep === 2}
 				<!-- PASO 2: ELECCIÓN DE AVATAR (CLASE DE JUEGO) EN CARRUSEL -->
-				<p class="subtitle">Selecciona la Clase de tu avatar y ajusta la versión visual.</p>
+				<p class="subtitle">{copy.wizard.avatar_prompt}</p>
 				<fieldset disabled={joining} class="selection-fieldset">
 					<div class="carousel-container">
 						<!-- NAV DEL CARRUSEL DE CLASES -->
@@ -1820,7 +1810,9 @@
 								/>
 							</div>
 
-							<!-- BOTONES TOGGLE MASCULINO / FEMENINO -->
+							<!-- BOTONES TOGGLE MASCULINO / FEMENINO (solo si la clase tiene
+							     dos versiones visuales distintas) -->
+							{#if currentAvatarClass.image_url_m !== currentAvatarClass.image_url_f}
 							<div class="gender-toggle">
 								<button
 									type="button"
@@ -1837,6 +1829,7 @@
 									♀ Femenino
 								</button>
 							</div>
+							{/if}
 
 							<p class="class-desc">{currentAvatarClass.description}</p>
 
@@ -1846,7 +1839,7 @@
 								{#each Object.entries(currentAvatarClass.default_sp || {}) as [attrKey, attrVal]}
 									<div class="sp-bar-row">
 										<div class="sp-label">
-											<SkillBadge skillKey={attrKey} value={Number(attrVal)} showValue={false} />
+											<SkillBadge skillKey={attrKey} value={Number(attrVal)} showValue={false} {customSkills} />
 											<strong class="attr-val mono">{attrVal} / {maxSP[attrKey] || 20}</strong>
 										</div>
 										<div class="sp-track">
@@ -1867,7 +1860,7 @@
 
 					<div class="wizard-actions">
 						<button type="button" class="secondary-btn" onclick={() => (onboardingStep = 1)}>
-							⬅ Volver a Facciones
+							{copy.wizard.back_to_factions}
 						</button>
 
 						<button class="primary-btn confirm-btn" onclick={handleJoinEvent} disabled={joining}>
@@ -1876,7 +1869,7 @@
 									<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 									<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 								</svg>
-								<span>Inicializando Agente e Ingresando...</span>
+								<span>Ingresando al evento...</span>
 							{:else}
 								<span>Confirmar e Ingresar al Evento ⚡</span>
 							{/if}
@@ -1893,14 +1886,18 @@
 		{#if narrativeActIndex > 0}
 			<div class="narrative-overlay">
 				<div class="narrative-card">
-					<div class="narrative-badge">ACTO {narrativeActIndex} DE 4 · {narrativeActLabel}</div>
-					<div class="narrative-speaker">
-						<img src="/images/gamescon/characters/char_huizinga.jpg" alt="Dra. Elena Huizinga" class="narrative-speaker-avatar" />
-						<div class="narrative-speaker-info">
-							<strong>Dra. Elena Huizinga</strong>
-							<span>Directora de la Agencia Antropológica Huizinga</span>
+					<div class="narrative-badge">ACTO {narrativeActIndex} DE {narrativeActCount} · {narrativeActLabel}</div>
+					{#if copy.onboarding}
+						<div class="narrative-speaker">
+							{#if copy.onboarding.speaker.portrait_url}
+								<img src={copy.onboarding.speaker.portrait_url} alt={copy.onboarding.speaker.name} class="narrative-speaker-avatar" />
+							{/if}
+							<div class="narrative-speaker-info">
+								<strong>{copy.onboarding.speaker.name}</strong>
+								<span>{copy.onboarding.speaker.role}</span>
+							</div>
 						</div>
-					</div>
+					{/if}
 					<button type="button" class="narrative-text-btn" onclick={completeTypewriter} aria-label="Completar texto de la transmisión">
 						<span class="narrative-p">
 							{displayedNarrativeText}
@@ -1911,10 +1908,10 @@
 					</button>
 					<div class="narrative-actions">
 						<button type="button" class="secondary-btn" onclick={skipNarrative}>
-							Omitir informe e ir a la terminal
+							{copy.onboarding?.skip_label || 'Omitir'}
 						</button>
 						<button type="button" class="primary-btn" onclick={advanceNarrative}>
-							{narrativeActIndex < 4 ? 'Siguiente ➜' : 'Acceder al HUD ⚡'}
+							{narrativeActIndex < narrativeActCount ? 'Siguiente ➜' : copy.onboarding?.finish_label || 'Comenzar ⚡'}
 						</button>
 					</div>
 				</div>
@@ -1938,7 +1935,7 @@
 							<div class="stat-pill xp">+{codeRewardModal.xpReward} XP</div>
 						{/if}
 						{#if codeRewardModal.cpReward > 0}
-							<div class="stat-pill cp">+{codeRewardModal.cpReward} <Gem size={13} /></div>
+							<div class="stat-pill cp">+{codeRewardModal.cpReward} {copy.currency_icon}</div>
 						{/if}
 					</div>
 
@@ -1947,9 +1944,9 @@
 						{@const firstMission = codeRewardModal.newlyUnlockedMissions[0]}
 						<div class="unlocked-mission-preview">
 							<div class="ump-header">
-								<span class="ump-tag mono">NUEVA DIRECTIVA DESBLOQUEADA</span>
+								<span class="ump-tag mono">{copy.labels.unlocked_mission}</span>
 								<span class="ump-type-tag {firstMission.type || firstMission.mission_type || 'code'}">
-									{(firstMission.type || firstMission.mission_type || 'MISIÓN').toUpperCase()}
+									{missionTypeLabel(copy, firstMission.type || firstMission.mission_type)}
 								</span>
 							</div>
 							<h4 class="ump-title">{firstMission.title}</h4>
@@ -1960,7 +1957,7 @@
 									<span>+{(firstMission.mechanic?.rewards?.xp || firstMission.rewards?.xp)} XP</span>
 								{/if}
 								{#if firstMission.mechanic?.rewards?.cp || firstMission.rewards?.cp}
-									<span>+{(firstMission.mechanic?.rewards?.cp || firstMission.rewards?.cp)} <Gem size={12} /></span>
+									<span>+{(firstMission.mechanic?.rewards?.cp || firstMission.rewards?.cp)} {copy.currency_icon}</span>
 								{/if}
 							</div>
 						</div>
@@ -1979,7 +1976,7 @@
 									if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'instant' });
 								}}
 							>
-								<span>Ir a Misión Desbloqueada ➔</span>
+								<span>{copy.labels.go_to_mission}</span>
 							</button>
 						{/if}
 						<button
@@ -1987,7 +1984,7 @@
 							class="secondary-btn"
 							onclick={() => (codeRewardModal = null)}
 						>
-							Permanecer en la Terminal
+							{copy.labels.stay}
 						</button>
 					</div>
 				</div>
@@ -2041,7 +2038,7 @@
 							{/if}
 							<div class="milestone-speaker-info">
 								<strong>{currentMilestone.narrative.speaker_name}</strong>
-								<span>{currentMilestone.narrative.speaker_role || 'Agencia Antropológica Huizinga'}</span>
+								<span>{currentMilestone.narrative.speaker_role || copy.organization_name}</span>
 							</div>
 						</div>
 					{/if}
@@ -2064,7 +2061,7 @@
 							<span class="milestone-rewards-title mono">RECOMPENSAS DESBLOQUEADAS</span>
 							<div class="milestone-rewards mono">
 								<span>+{currentMilestone.xp} XP</span>
-								{#if currentMilestone.cp}<span>+{currentMilestone.cp} <Gem size={13} /></span>{/if}
+								{#if currentMilestone.cp}<span>+{currentMilestone.cp} {copy.currency_icon}</span>{/if}
 								{#if currentMilestone.spBonus}<span>+{currentMilestone.spBonus} SP</span>{/if}
 							</div>
 
@@ -2189,6 +2186,9 @@
 			onClose={() => (vaultOpen = false)}
 			onPurchase={handlePurchaseReward}
 			onActivateBoost={handleActivateSpBoost}
+			title={copy.vault_name}
+			hint={copy.vault_hint}
+			currencyIcon={copy.currency_icon}
 		/>
 
 		<!-- JUEGO DE CONTACTOS: modal de activación/edición del perfil -->
@@ -2296,7 +2296,7 @@
 						</p>
 						<div class="world-pts-tip-box">
 							<Sparkle size={16} />
-							<p>Cada misión superada y código validado por cualquier agente en la convención empuja este indicador en tiempo real.</p>
+							<p>{copy.world_meter.description}</p>
 						</div>
 					</div>
 
@@ -2359,7 +2359,7 @@
 		{/if}
 
 		<!-- MODAL DE BIENVENIDA: OPERADOR CIPHER (sección 7.3 del diseño) -->
-		{#if showCipherWelcomeModal}
+		{#if showCipherWelcomeModal && copy.welcome_modal}
 			<div
 				class="modal-overlay"
 				role="button"
@@ -2376,16 +2376,18 @@
 					onkeydown={(e) => e.stopPropagation()}
 				>
 					<div class="cipher-modal-header">
-						<img src="/images/gamescon/characters/char_cipher.jpg" alt="Operador Cipher" class="cipher-modal-avatar" />
+						{#if copy.welcome_modal.speaker.portrait_url}
+							<img src={copy.welcome_modal.speaker.portrait_url} alt={copy.welcome_modal.speaker.name} class="cipher-modal-avatar" />
+						{/if}
 						<div class="cipher-modal-meta">
-							<span class="m-badge cipher"><Radio size={12} /> TRANSMISIÓN DIRECTA</span>
-							<h3>Operador Cipher</h3>
-							<span class="cipher-modal-role">Soporte Táctico y Telecomunicaciones</span>
+							<span class="m-badge cipher"><Radio size={12} /> {copy.welcome_modal.badge}</span>
+							<h3>{copy.welcome_modal.speaker.name}</h3>
+							<span class="cipher-modal-role">{copy.welcome_modal.speaker.role}</span>
 						</div>
 					</div>
-					<p>¡Enlace establecido, colega! Soy Cipher, tu soporte táctico durante el congreso. La Dra. Huizinga ya te dio el panorama general, pero aquí en el terreno vamos paso a paso.</p>
-					<p>Para inicializar tu terminal, habilitar el sistema de seguridad y desbloquear tus herramientas de campo, necesitamos confirmar que tu conexión no está intervenida por el Sindicato.</p>
-					<p>Introduce la clave de acceso <strong>LUDENS</strong> en el Panel de Códigos de tu HUD.</p>
+					{#each copy.welcome_modal.paragraphs_html as paragraph}
+						<p>{@html paragraph}</p>
+					{/each}
 					<button type="button" class="primary-btn modal-close" onclick={closeCipherModal}>Entendido</button>
 				</div>
 			</div>
@@ -2423,7 +2425,7 @@
 				<div class="player-info">
 					<div class="agent-name">{player.avatar.name}</div>
 					<div class="row-title">
-						<span class="rank-tag" style="background: {ownFactionColor}33; color: {ownFactionColor}">{player.avatar.rank_title || 'Recluta de la Red'}</span>
+						<span class="rank-tag" style="background: {ownFactionColor}33; color: {ownFactionColor}">{player.avatar.rank_title || copy.rank_default}</span>
 					</div>
 					<div class="xp-bar-container">
 						<div class="xp-bar" style="width: {xpProgressPercent}%"></div>
@@ -2435,8 +2437,12 @@
 				</div>
 			</div>
 			<div class="top-bar-right">
-				<button type="button" class="cp-badge" onclick={openVault} aria-label="Abrir la Bóveda de Inteligencia" title="Bóveda de Inteligencia">
-					<Gem size={16} />
+				<button type="button" class="cp-badge" onclick={openVault} aria-label="Abrir {copy.vault_name}" title={copy.vault_name}>
+					{#if copy.currency_icon === '💠'}
+						<Gem size={16} />
+					{:else}
+						<span class="cp-emoji" aria-hidden="true">{copy.currency_icon}</span>
+					{/if}
 					<span class="cp-val mono">{player.avatar.cp.points}</span>
 				</button>
 				<button
@@ -2486,6 +2492,8 @@
 				refreshing={refreshingWorldState}
 				onRefresh={refreshWorldState}
 				onFactionClick={openFactionDetail}
+				colors={factionColorsConfig}
+				title={copy.factions_label.toUpperCase()}
 			/>
 
 			{#if worldPulseText}
@@ -2506,17 +2514,17 @@
 							<div class="milestone-imminent-badge"><Zap size={13} /> A UNA MISIÓN DEL PRÓXIMO HITO</div>
 						{/if}
 						<div class="pt-header">
-							<span>{player.avatar.rank_title || 'Recluta de la Red'}</span>
-							<strong>{completedMissionsCount} misiones completadas</strong>
+							<span>{player.avatar.rank_title || copy.rank_default}</span>
+							<strong>{completedMissionsCount} {copy.progress_unit_plural} completadas</strong>
 						</div>
 						<div class="progress-bg">
 							<div class="progress-fill milestone" style="width: {milestoneProgressPct}%"></div>
 						</div>
 						<small class="hint">
 							{#if nextMilestone}
-								Próximo Hito en {nextMilestone - completedMissionsCount} misión(es) más — Rango {nextMilestoneObj?.rankTitle || 'Siguiente Nivel'}.
+								Próximo Hito en {nextMilestone - completedMissionsCount} {copy.progress_unit_plural} más — Rango {nextMilestoneObj?.rankTitle || 'Siguiente Nivel'}.
 							{:else}
-								Rango máximo alcanzado: {eventMilestones[eventMilestones.length - 1]?.rankTitle || 'Agente Master Huizinga'}.
+								Rango máximo alcanzado: {eventMilestones[eventMilestones.length - 1]?.rankTitle || copy.rank_default}.
 							{/if}
 						</small>
 					</div>
@@ -2553,7 +2561,7 @@
 					{#if !player.avatar?.contact_profile}
 						<button type="button" class="contact-card contact-card-inactive" onclick={openContactModal}>
 							<Users size={18} />
-							<span>Activa tu código personal para intercambiar contacto con otros agentes</span>
+							<span>Activa tu código personal para intercambiar contacto con otros {copy.player_noun_plural}</span>
 						</button>
 					{:else}
 						<button
@@ -2602,12 +2610,12 @@
 								class="m-thumb"
 							/>
 							<div class="m-info">
-								<span class="m-badge">{featuredMission.type.toUpperCase()}</span>
+								<span class="m-badge">{missionTypeLabel(copy, featuredMission.type)}</span>
 								<h4>{featuredMission.title}</h4>
 								<p>{featuredMission.preview}</p>
 								<div class="m-rewards">
 									<span>+{featuredMission.xp} XP</span>
-									<span>+{featuredMission.cp} CP</span>
+									<span>+{featuredMission.cp} {copy.currency_icon}</span>
 								</div>
 							</div>
 						</button>
@@ -2615,7 +2623,7 @@
 						<div class="section-title">Misión Destacada</div>
 						<div class="no-mission-card">
 							<span class="no-mission-icon"><Radio size={26} /></span>
-							<p>Sin transmisiones activas. Localiza a un Operador de campo o una terminal física para recibir tu próximo código, Agente.</p>
+							<p>{copy.empty_featured_mission}</p>
 						</div>
 					{/if}
 
@@ -2695,7 +2703,7 @@
 								disabled={!m.unlocked}
 							>
 								<div class="m-header">
-									<span class="m-badge {m.type}">{m.type.toUpperCase()}</span>
+									<span class="m-badge {m.type}">{missionTypeLabel(copy, m.type)}</span>
 									{#if m.completed}
 										<span class="status-tag done">COMPLETADA <Check size={12} /></span>
 									{:else if !m.unlocked}
@@ -2720,7 +2728,7 @@
 
 								<div class="m-rewards">
 									<span>+{m.xp} XP</span>
-									<span>+{m.cp} CP</span>
+									<span>+{m.cp} {copy.currency_icon}</span>
 								</div>
 							</button>
 						{/each}
@@ -2732,16 +2740,18 @@
 					<h2 class="pane-title">{currentMap.name}</h2>
 					<div class="map-wrapper">
 						{#if currentMap.image_url && !brokenImages['map-img']}
+							<!-- config.map_full_height: el mapa se muestra completo (sin
+							     recorte) para que los hotspots en % caigan sobre el dibujo. -->
 							<img
 								src={currentMap.image_url}
 								alt={currentMap.name}
-								class="map-img"
+								class="map-img {data.event?.config?.map_full_height ? 'full' : ''}"
 								onerror={() => markImageBroken('map-img')}
 							/>
 						{:else}
 							<div class="map-img img-placeholder map-img-placeholder">
 								<span><MapIcon size={34} /></span>
-								<p>Mapa del recinto pendiente de cargar — vuelve a intentarlo más tarde, Agente.</p>
+								<p>{copy.empty_map}</p>
 							</div>
 						{/if}
 
@@ -2753,10 +2763,14 @@
 								onclick={() => (selectedHotspot = {
 									title: hs.title,
 									desc: hs.description,
-									code: hs.code || (hs.unlocks_mission === 'm_time_bomb_01' ? 'DISABLE_99' : 'DEMO2026')
+									// Solo se ofrece canjear desde el mapa si el hotspot lo pide
+									// explícitamente (o es un hotspot legacy del demo con misión
+									// asociada). En eventos tipo ruta el código se consigue EN el
+									// stand — revelarlo en el mapa saltaría la visita.
+									code: hs.code || (hs.unlocks_mission ? (hs.unlocks_mission === 'm_time_bomb_01' ? 'DISABLE_99' : 'DEMO2026') : null)
 								})}
 							>
-								<MapPin size={13} /> {hs.title}
+								<MapPin size={13} /> {hs.label || hs.title}
 							</button>
 						{/each}
 					</div>
@@ -2765,6 +2779,7 @@
 						<div class="hotspot-modal">
 							<h3>{selectedHotspot.title}</h3>
 							<p>{selectedHotspot.desc}</p>
+							{#if selectedHotspot.code}
 							<button class="primary-btn" onclick={() => handleCodeSubmit(selectedHotspot.code)} disabled={submittingCode}>
 								{#if submittingCode}
 									<svg class="spinner" viewBox="0 0 24 24" fill="none">
@@ -2776,6 +2791,7 @@
 									<span>Probar Código ({selectedHotspot.code})</span>
 								{/if}
 							</button>
+							{/if}
 							<button class="secondary-btn" onclick={() => (selectedHotspot = null)}>Cerrar</button>
 						</div>
 					{/if}
@@ -3052,7 +3068,7 @@
 			{:else if activeTab === 'profile'}
 				<!-- PROFILE & JOURNAL TAB -->
 				<div class="tab-pane">
-					<h2 class="pane-title">Expediente del Agente</h2>
+					<h2 class="pane-title">{copy.profile_title}</h2>
 					
 					<div class="profile-card">
 						{#if player.avatar.image_url && !brokenImages['avatar-profile']}
@@ -3070,7 +3086,7 @@
 						{/if}
 						<h3>{player.avatar.name}</h3>
 						<p class="p-fac">
-							{player.avatar.class_name || 'Clase Agente'} •
+							{player.avatar.class_name || copy.player_noun} •
 							<strong style="color: {ownFactionColor}">{factionsState.find((f: any) => f.id === player.avatar.faction_id)?.name || player.avatar.faction_id}</strong>
 						</p>
 
@@ -3085,7 +3101,7 @@
 							{#each Object.entries(player.avatar.sp || {}) as [attrKey, attrVal]}
 								<div class="sp-bar-row">
 									<div class="sp-label">
-										<SkillBadge skillKey={attrKey} value={Number(attrVal)} showValue={false} />
+										<SkillBadge skillKey={attrKey} value={Number(attrVal)} showValue={false} {customSkills} />
 										<strong class="attr-val mono">{attrVal} / {PLAYER_SP_CAP}</strong>
 									</div>
 									<div class="sp-track">
@@ -3113,14 +3129,14 @@
 						{/if}
 					</div>
 
-					<div class="section-title vault-section-title">Bóveda de Inteligencia</div>
+					<div class="section-title vault-section-title">{copy.vault_name}</div>
 					{#if player.game_status?.vip_token}
 						<div class="profile-vip-token">
 							<span class="vip-token-label">Token de Consulta VIP</span>
 							<strong class="vip-token-val mono">{player.game_status.vip_token}</strong>
 						</div>
 					{/if}
-					<button type="button" class="primary-btn to-vault-btn" onclick={openVault}><Gem size={14} /> Abrir la Bóveda</button>
+					<button type="button" class="primary-btn to-vault-btn" onclick={openVault}><Gem size={14} /> Abrir {copy.vault_name}</button>
 
 					<div class="section-title vault-section-title">Contactos</div>
 					{#if player.avatar?.contact_profile}
@@ -3130,7 +3146,7 @@
 						</div>
 						<button type="button" class="primary-btn to-vault-btn" onclick={openContactModal}><Users size={14} /> Editar perfil de contacto</button>
 					{:else}
-						<p class="hint">Activá tu código personal para intercambiar contacto con otros agentes.</p>
+						<p class="hint">Activá tu código personal para intercambiar contacto con otros {copy.player_noun_plural}.</p>
 						<button type="button" class="primary-btn to-vault-btn" onclick={openContactModal}><Users size={14} /> Activar código personal</button>
 					{/if}
 
@@ -3170,8 +3186,19 @@
 			{:else if activeTab === 'items'}
 				<!-- ITEMS & INVENTORY TAB -->
 				<div class="tab-pane">
+					{#if passportConfig}
+						<RoutePassport
+							passport={passportConfig}
+							vendors={vendorsList}
+							{missions}
+							itemLabel={copy.progress_unit_plural}
+							onOpenMission={openMissionModal}
+						/>
+						<div class="section-title">Tus objetos</div>
+					{:else}
 					<h2 class="pane-title">Inventario de Objetos</h2>
 					<p class="hint" style="margin-top: -0.5rem; margin-bottom: 1.25rem;">Colecciona objetos secretos, pistas multimedia y registros de audio durante el evento.</p>
+					{/if}
 
 					{#if items.length === 0}
 						<div class="empty-votes-card">
@@ -3269,9 +3296,9 @@
 					<!-- RECOMPENSAS DE LA BÓVEDA (Fase 4.4): distinto de los ítems de
 					     arriba (esos vienen de misiones/códigos, estos de comprar en
 					     eventgage_event_rewards) — sección propia con acceso a la Bóveda. -->
-					<div class="section-title vault-section-title">Recompensas de la Bóveda</div>
+					<div class="section-title vault-section-title">Canjeado en {copy.vault_name}</div>
 					{#if purchasedRewards.length === 0}
-						<p class="hint">Todavía no canjeaste nada en la Bóveda de Inteligencia.</p>
+						<p class="hint">Todavía no canjeaste nada en {copy.vault_name}.</p>
 					{:else}
 						{@const B2B_DOC_MAP: Record<string, string> = {
 							rew_bem_executive_deck: '/docs/gamescon/kit_ejecutivo_bem.pdf',
@@ -3288,18 +3315,21 @@
 							{#each purchasedRewards as reward (reward.id)}
 								<div class="vault-inventory-row">
 									<span class="vault-inventory-name">{reward.name}</span>
-									{#if B2B_DOC_MAP[reward.id]}
+									{#if player.game_status?.coupons?.[reward.id]}
+										<!-- Cupón de aliado: el código único se muestra en el stand. -->
+										<strong class="vault-inventory-cost mono">{player.game_status.coupons[reward.id]}</strong>
+									{:else if B2B_DOC_MAP[reward.id]}
 										<a href={B2B_DOC_MAP[reward.id]} download class="vault-inventory-download-link" target="_blank" rel="noopener noreferrer">
 											Descargar PDF ⤓
 										</a>
 									{:else}
-										<span class="vault-inventory-cost mono">{reward.cost} 💠</span>
+										<span class="vault-inventory-cost mono">{reward.cost} {copy.currency_icon}</span>
 									{/if}
 								</div>
 							{/each}
 						</div>
 					{/if}
-					<button type="button" class="primary-btn to-vault-btn" onclick={openVault}><Gem size={14} /> Ir a la Bóveda</button>
+					<button type="button" class="primary-btn to-vault-btn" onclick={openVault}><Gem size={14} /> Ir a {copy.vault_name}</button>
 				</div>
 			{/if}
 		</main>
@@ -3350,7 +3380,7 @@
 							</div>
 						</div>
 					{:else}
-						<span class="m-badge {selectedMission.type}">{selectedMission.type.toUpperCase()}</span>
+						<span class="m-badge {selectedMission.type}">{missionTypeLabel(copy, selectedMission.type)}</span>
 						<h3>{selectedMission.title}</h3>
 						<p>{selectedMission.description}</p>
 
@@ -3455,7 +3485,7 @@
 								{#if !missionResult}
 									<p class="dc-note">DC actual: <strong class="mono">{diceCheckDc}</strong> — sube con tus propias misiones resueltas, no es arbitrario.</p>
 									<p class="mechanic-hint">
-										Atributo en juego: <SkillBadge skillKey={diceCheckAttribute} value={diceCheckSp} />
+										Atributo en juego: <SkillBadge skillKey={diceCheckAttribute} value={diceCheckSp} {customSkills} />
 										→ modificador <strong class="mono">+{diceCheckModifier}</strong>
 										<br />Tirada: d20 + modificador, contra el DC de arriba.
 									</p>
@@ -3476,6 +3506,9 @@
 								{/if}
 							</div>
 						{:else if selectedMission.type === 'trivia_quiz'}
+							{#if selectedMission.mechanic?.question}
+								<p class="trivia-question">{selectedMission.mechanic.question}</p>
+							{/if}
 							<div class="vote-options">
 								{#each (selectedMission.mechanic?.options || []) as opt}
 									<button
@@ -3622,8 +3655,13 @@
 				<span class="nav-label">Misiones</span>
 			</button>
 			<button class="nav-item {activeTab === 'items' ? 'active' : ''}" onclick={() => (activeTab = 'items')}>
-				<span class="nav-icon"><Backpack size={22} strokeWidth={2.25} /></span>
-				<span class="nav-label">Inventario</span>
+				{#if passportConfig}
+					<span class="nav-icon"><Stamp size={22} strokeWidth={2.25} /></span>
+					<span class="nav-label">Pasaporte</span>
+				{:else}
+					<span class="nav-icon"><Backpack size={22} strokeWidth={2.25} /></span>
+					<span class="nav-label">Inventario</span>
+				{/if}
 			</button>
 			{#if hasMap}
 				<button class="nav-item {activeTab === 'map' ? 'active' : ''}" onclick={() => (activeTab = 'map')}>
@@ -3654,7 +3692,7 @@
 	:global(body) {
 		margin: 0;
 		padding: 0;
-		background: #090d16;
+		background: var(--bg-app, #090d16);
 		color: #f8fafc;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 		--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
@@ -3708,7 +3746,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(99, 102, 241, 0.12);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.12);
 		font-size: var(--text-2xl);
 		flex-shrink: 0;
 	}
@@ -3717,7 +3755,7 @@
 	.selection-overlay {
 		position: fixed;
 		inset: 0;
-		background: radial-gradient(circle at top, #1e1b4b 0%, #090d16 80%);
+		background: radial-gradient(circle at top, var(--bg-glow, #1e1b4b) 0%, var(--bg-app, #090d16) 80%);
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
@@ -3728,7 +3766,7 @@
 		box-sizing: border-box;
 	}
 	.selection-card {
-		background: rgba(15, 23, 42, 0.92);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.92);
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		backdrop-filter: blur(16px);
 		border-radius: var(--radius-xl);
@@ -3745,9 +3783,9 @@
 		font-size: var(--text-sm);
 		font-weight: 800;
 		letter-spacing: 0.08em;
-		background: rgba(99, 102, 241, 0.2);
-		color: #818cf8;
-		border: 1px solid rgba(99, 102, 241, 0.4);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.2);
+		color: var(--accent-soft, #818cf8);
+		border: 1px solid rgba(var(--accent-rgb, 99, 102, 241), 0.4);
 		padding: 0.25rem 0.6rem;
 		border-radius: var(--radius-pill);
 		margin-bottom: 0.5rem;
@@ -3781,7 +3819,7 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.85rem;
-		background: rgba(30, 41, 59, 0.7);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.7);
 		border: 1px solid rgba(255, 255, 255, 0.12);
 		border-radius: var(--radius-lg);
 		padding: 0.85rem 1rem;
@@ -3796,9 +3834,9 @@
 		border-color: rgba(255, 255, 255, 0.25);
 	}
 	.option-btn.active {
-		background: rgba(99, 102, 241, 0.25);
-		border-color: #818cf8;
-		box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.25);
+		border-color: var(--accent-soft, #818cf8);
+		box-shadow: 0 0 20px rgba(var(--accent-rgb, 99, 102, 241), 0.4);
 	}
 	.icon-thumb {
 		width: 52px;
@@ -3808,7 +3846,7 @@
 		object-fit: cover;
 		border: 2px solid rgba(255, 255, 255, 0.25);
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-		background: #090d16;
+		background: var(--bg-app, #090d16);
 		margin-top: 0.15rem;
 		flex-shrink: 0;
 	}
@@ -3873,7 +3911,7 @@
 	.primary-btn {
 		width: 100%;
 		padding: 0.85rem 1.25rem;
-		background: linear-gradient(135deg, #6366f1, #a855f7);
+		background: linear-gradient(135deg, var(--accent, #6366f1), var(--accent2, #a855f7));
 		border: none;
 		border-radius: var(--radius-md);
 		color: #fff;
@@ -3914,32 +3952,32 @@
 
 	/* CARRUSEL Y WIZARD DE AVATARES */
 	.carousel-container { display: flex; flex-direction: column; gap: 1rem; margin: 1rem 0; }
-	.carousel-nav { display: flex; align-items: center; justify-content: space-between; background: rgba(30, 41, 59, 0.7); padding: 0.6rem 0.85rem; border-radius: var(--radius-md); border: 1px solid rgba(255, 255, 255, 0.1); }
-	.nav-arrow { background: rgba(99, 102, 241, 0.2); border: 1px solid #818cf8; color: #fff; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: var(--text-lg); transition: background 0.15s ease; }
-	.nav-arrow:hover { background: rgba(99, 102, 241, 0.4); }
+	.carousel-nav { display: flex; align-items: center; justify-content: space-between; background: rgba(var(--panel-rgb, 30, 41, 59), 0.7); padding: 0.6rem 0.85rem; border-radius: var(--radius-md); border: 1px solid rgba(255, 255, 255, 0.1); }
+	.nav-arrow { background: rgba(var(--accent-rgb, 99, 102, 241), 0.2); border: 1px solid var(--accent-soft, #818cf8); color: #fff; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: var(--text-lg); transition: background 0.15s ease; }
+	.nav-arrow:hover { background: rgba(var(--accent-rgb, 99, 102, 241), 0.4); }
 	.carousel-title-group { text-align: center; }
-	.class-label { font-size: var(--text-xs); color: #a855f7; font-weight: 800; letter-spacing: 0.08em; display: block; }
+	.class-label { font-size: var(--text-xs); color: var(--accent2, #a855f7); font-weight: 800; letter-spacing: 0.08em; display: block; }
 	.carousel-title-group h4 { margin: 0.15rem 0 0 0; font-size: var(--text-xl); color: #fff; }
 
-	.avatar-card { background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-lg); padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
+	.avatar-card { background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.8); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-lg); padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }
 	.avatar-img-wrapper { width: 100%; height: 210px; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.15); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5); }
 	.carousel-avatar-img { width: 100%; height: 100%; object-fit: cover; transition: opacity 0.3s ease; }
 
 	.gender-toggle { display: flex; gap: 0.6rem; justify-content: center; }
-	.gender-btn { flex: 1; padding: 0.55rem 0.85rem; background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-sm); color: #94a3b8; font-weight: 700; font-size: var(--text-md); cursor: pointer; transition: all 0.2s ease; }
-	.gender-btn.active { background: rgba(168, 85, 247, 0.25); border-color: #a855f7; color: #fff; box-shadow: 0 0 12px rgba(168, 85, 247, 0.3); }
+	.gender-btn { flex: 1; padding: 0.55rem 0.85rem; background: rgba(var(--panel-rgb, 30, 41, 59), 0.6); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-sm); color: #94a3b8; font-weight: 700; font-size: var(--text-md); cursor: pointer; transition: all 0.2s ease; }
+	.gender-btn.active { background: rgba(var(--accent2-rgb, 168, 85, 247), 0.25); border-color: var(--accent2, #a855f7); color: #fff; box-shadow: 0 0 12px rgba(var(--accent2-rgb, 168, 85, 247), 0.3); }
 
 	.class-desc { font-size: var(--text-md); color: #cbd5e1; margin: 0; line-height: 1.45; }
 
 	/* BARRAS DE PROGRESO DE PUNTOS SP */
-	.sp-bars-container { background: rgba(30, 41, 59, 0.5); padding: 1rem; border-radius: var(--radius-md); border: 1px solid rgba(255, 255, 255, 0.08); display: flex; flex-direction: column; gap: 0.75rem; text-align: left; }
-	.sp-bars-container h5 { margin: 0 0 0.4rem 0; font-size: var(--text-sm); color: #818cf8; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; }
+	.sp-bars-container { background: rgba(var(--panel-rgb, 30, 41, 59), 0.5); padding: 1rem; border-radius: var(--radius-md); border: 1px solid rgba(255, 255, 255, 0.08); display: flex; flex-direction: column; gap: 0.75rem; text-align: left; }
+	.sp-bars-container h5 { margin: 0 0 0.4rem 0; font-size: var(--text-sm); color: var(--accent-soft, #818cf8); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; }
 	.sp-bar-row { display: flex; flex-direction: column; gap: 0.35rem; }
 	.sp-label { display: flex; justify-content: space-between; align-items: center; font-size: var(--text-base); }
 	.attr-name { color: #94a3b8; font-weight: 700; }
-	.attr-val { color: #818cf8; font-weight: 800; }
+	.attr-val { color: var(--accent-soft, #818cf8); font-weight: 800; }
 	.sp-track { width: 100%; height: 7px; background: rgba(0, 0, 0, 0.4); border-radius: var(--radius-xs); overflow: hidden; }
-	.sp-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #a855f7); border-radius: var(--radius-xs); transition: width 0.4s ease-out; }
+	.sp-fill { height: 100%; background: linear-gradient(90deg, var(--accent, #6366f1), var(--accent2, #a855f7)); border-radius: var(--radius-xs); transition: width 0.4s ease-out; }
 
 	.wizard-actions { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; }
 
@@ -3948,7 +3986,7 @@
 		max-width: 480px;
 		margin: 0 auto;
 		min-height: 100vh;
-		background: #090d16;
+		background: var(--bg-app, #090d16);
 		display: flex;
 		flex-direction: column;
 		position: relative;
@@ -3957,8 +3995,8 @@
 
 	/* ALERT BANNER */
 	.alert-banner {
-		background: rgba(15, 23, 42, 0.95);
-		border-bottom: 2px solid #6366f1;
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.95);
+		border-bottom: 2px solid var(--accent, #6366f1);
 		padding: 0.75rem 1rem;
 		font-size: var(--text-base);
 		position: sticky;
@@ -3970,7 +4008,7 @@
 	.alert-banner.warning { border-color: #f59e0b; }
 	.alert-content { display: flex; align-items: center; gap: 0.5rem; }
 	.alert-timer { height: 2px; background: rgba(255,255,255,0.1); margin-top: 0.5rem; }
-	.alert-bar { height: 100%; background: #6366f1; transition: width 1s linear; }
+	.alert-bar { height: 100%; background: var(--accent, #6366f1); transition: width 1s linear; }
 
 	/* TOP HEADER */
 	.top-bar {
@@ -3978,7 +4016,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 0.85rem 1rem;
-		background: rgba(15, 23, 42, 0.8);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.8);
 		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 	}
 	/* min-width:0 en toda la cadena flex es lo que permite truncar con
@@ -3987,7 +4025,7 @@
 	   (no comparte línea con el badge de rango): antes ambos peleaban por el
 	   mismo espacio angosto y el nombre terminaba reducido a 3-4 letras. */
 	.player-summary { display: flex; align-items: center; gap: 0.65rem; flex: 1; min-width: 0; }
-	.avatar-img { width: 40px; height: 40px; border-radius: 50%; border: 2px solid #818cf8; object-fit: cover; flex-shrink: 0; }
+	.avatar-img { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--accent-soft, #818cf8); object-fit: cover; flex-shrink: 0; }
 	.player-info { flex: 1; min-width: 0; }
 	.agent-name {
 		font-weight: 700;
@@ -3998,9 +4036,9 @@
 		white-space: nowrap;
 	}
 	.row-title { display: flex; align-items: center; gap: 0.4rem; min-width: 0; margin-top: 0.2rem; }
-	.rank-tag { font-size: var(--text-xs); background: rgba(99, 102, 241, 0.2); color: #818cf8; padding: 0.15rem 0.4rem; border-radius: var(--radius-xs); font-weight: 800; white-space: nowrap; flex-shrink: 0; }
+	.rank-tag { font-size: var(--text-xs); background: rgba(var(--accent-rgb, 99, 102, 241), 0.2); color: var(--accent-soft, #818cf8); padding: 0.15rem 0.4rem; border-radius: var(--radius-xs); font-weight: 800; white-space: nowrap; flex-shrink: 0; }
 	.xp-bar-container { width: 100%; height: 5px; background: rgba(255,255,255,0.1); border-radius: var(--radius-xs); margin: 0.35rem 0 0.2rem 0; overflow: hidden; }
-	.xp-bar { height: 100%; background: linear-gradient(90deg, #6366f1, #a855f7); border-radius: var(--radius-xs); }
+	.xp-bar { height: 100%; background: linear-gradient(90deg, var(--accent, #6366f1), var(--accent2, #a855f7)); border-radius: var(--radius-xs); }
 	.xp-label { display: flex; justify-content: space-between; font-size: var(--text-sm); color: #94a3b8; font-weight: 600; }
 
 	/* flex-shrink:0 asegura que este bloque nunca ceda espacio ni se corte —
@@ -4009,7 +4047,7 @@
 	   más ancho horizontal a la columna del nombre/rango. */
 	.top-bar-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; flex-shrink: 0; }
 	.sound-toggle {
-		background: rgba(30, 41, 59, 0.85);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.85);
 		border: 1px solid rgba(255, 255, 255, 0.15);
 		color: #ffffff;
 		border-radius: 50%;
@@ -4035,7 +4073,7 @@
 	}
 
 	.cp-badge {
-		background: rgba(30, 41, 59, 0.8);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.8);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		padding: 0.35rem 0.55rem;
 		border-radius: var(--radius-pill);
@@ -4049,7 +4087,7 @@
 		flex-shrink: 0;
 		cursor: pointer;
 	}
-	.cp-badge:hover { background: rgba(30, 41, 59, 1); border-color: rgba(251, 191, 36, 0.4); }
+	.cp-badge:hover { background: rgba(var(--panel-rgb, 30, 41, 59), 1); border-color: rgba(251, 191, 36, 0.4); }
 
 	/* WORLD EVENT WIDGET — Inercia Global y Gremios apilados a ancho completo en
 	   vez de una grilla de 2 columnas: a la mitad del ancho, el label de
@@ -4060,11 +4098,11 @@
 		flex-direction: column;
 		gap: 0.6rem;
 		padding: 0.85rem 1rem;
-		background: rgba(15, 23, 42, 0.4);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.4);
 		border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 	}
 	.point-card {
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		clip-path: var(--corner-cut);
 		padding: 0.6rem;
@@ -4079,7 +4117,7 @@
 		position: relative;
 	}
 	.point-card.clickable:hover {
-		background: rgba(30, 41, 59, 0.8);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.8);
 		border-color: rgba(239, 68, 68, 0.35);
 		box-shadow: 0 4px 16px rgba(239, 68, 68, 0.15);
 		transform: translateY(-1px);
@@ -4147,7 +4185,7 @@
 	.progress-fill.danger { height: 100%; background: #ef4444; border-radius: var(--radius-xs); }
 	.progress-fill.milestone { height: 100%; background: linear-gradient(90deg, #f59e0b, #f97316); border-radius: var(--radius-xs); }
 	.milestone-card {
-		background: rgba(30, 41, 59, 0.6);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6);
 		border: 1px solid rgba(245, 158, 11, 0.25);
 		clip-path: var(--corner-cut);
 		padding: 0.85rem 1rem;
@@ -4207,11 +4245,11 @@
 	/* CONTENT TABS */
 	.main-content { padding: 1rem; flex: 1; }
 	.tab-pane { display: flex; flex-direction: column; gap: 1rem; }
-	.pane-title { margin: 0 0 0.25rem 0; font-size: var(--text-xl); }
+	.pane-title { margin: 0 0 0.25rem 0; font-size: var(--text-xl); font-family: var(--font-display, inherit); }
 
 	/* QUICK CODE */
 	.quick-code-card {
-		background: rgba(30, 41, 59, 0.6);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-lg);
 		padding: 1rem;
@@ -4222,27 +4260,27 @@
 	/* Juego de Contactos (sección 2.18) */
 	.contact-card {
 		display: flex; align-items: center; gap: 0.6rem; width: 100%;
-		background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6); border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-lg); padding: 0.85rem 1rem; color: #e2e8f0;
 		font-family: inherit; font-size: var(--text-base); text-align: left; cursor: pointer;
 	}
-	.contact-card-inactive { border-color: rgba(99, 102, 241, 0.4); }
-	.link-btn { background: none; border: none; color: #a5b4fc; cursor: pointer; font-family: inherit; padding: 0; }
+	.contact-card-inactive { border-color: rgba(var(--accent-rgb, 99, 102, 241), 0.4); }
+	.link-btn { background: none; border: none; color: var(--accent-pale, #a5b4fc); cursor: pointer; font-family: inherit; padding: 0; }
 	.contact-bio-input { resize: vertical; font-family: inherit; }
 	.contacts-list { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.6rem; }
 	.contact-row {
 		display: flex; justify-content: space-between; align-items: flex-start; gap: 0.6rem;
-		background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6); border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-md); padding: 0.7rem 0.85rem;
 	}
 	.contact-row-info { display: flex; flex-direction: column; gap: 0.15rem; }
-	.contact-linkedin { color: #a5b4fc; font-size: var(--text-sm); }
+	.contact-linkedin { color: var(--accent-pale, #a5b4fc); font-size: var(--text-sm); }
 	.contact-bio { margin: 0.2rem 0 0 0; }
 	.contact-vcf-btn { flex-shrink: 0; white-space: nowrap; }
 	.code-form { display: flex; gap: 0.5rem; }
 	.code-input {
 		flex: 1;
-		background: rgba(15, 23, 42, 0.8);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.8);
 		border: 1px solid rgba(255, 255, 255, 0.15);
 		border-radius: var(--radius-sm);
 		padding: 0.6rem 0.85rem;
@@ -4253,7 +4291,7 @@
 		letter-spacing: 0.04em;
 	}
 	.code-btn {
-		background: #6366f1;
+		background: var(--accent, #6366f1);
 		border: none;
 		border-radius: var(--radius-sm);
 		padding: 0.6rem 1rem;
@@ -4292,7 +4330,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.06);
 		border-radius: var(--radius-sm);
 		padding: 0.55rem 0.7rem;
@@ -4316,7 +4354,7 @@
 	/* FEATURED & MISSIONS */
 	.missions-list { display: flex; flex-direction: column; gap: 0.75rem; }
 	.mission-card {
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		clip-path: var(--corner-cut);
 		padding: 1rem;
@@ -4333,8 +4371,8 @@
 		flex-direction: row;
 		gap: 0.85rem;
 		align-items: center;
-		background: rgba(30, 41, 59, 0.7);
-		border-color: rgba(99, 102, 241, 0.3);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.7);
+		border-color: rgba(var(--accent-rgb, 99, 102, 241), 0.3);
 	}
 	.mission-card.locked { opacity: 0.5; cursor: not-allowed; }
 	.mission-card.completed { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.05); }
@@ -4342,7 +4380,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px dashed rgba(148, 163, 184, 0.3);
 		clip-path: var(--corner-cut);
 		padding: 1rem;
@@ -4380,7 +4418,7 @@
 	/* Badge de tipo de misión (3.2): esquinas rectas + monoespaciado en vez de
 	   la pastilla redondeada genérica — pasa de "etiqueta de producto" a "tag
 	   de sistema", coherente con el resto de la lectura de sistema (3.1). */
-	.m-badge { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; letter-spacing: 0.02em; padding: 0.15rem 0.4rem; border-radius: 0; background: rgba(99, 102, 241, 0.2); color: #818cf8; }
+	.m-badge { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 800; letter-spacing: 0.02em; padding: 0.15rem 0.4rem; border-radius: 0; background: rgba(var(--accent-rgb, 99, 102, 241), 0.2); color: var(--accent-soft, #818cf8); }
 	.m-badge.time_bomb { background: rgba(239, 68, 68, 0.2); color: #f87171; }
 	.m-badge.cipher { background: rgba(16, 185, 129, 0.2); color: #34d399; align-self: flex-start; }
 	.status-tag { font-size: var(--text-xs); font-weight: 700; }
@@ -4398,7 +4436,7 @@
 	}
 	.dialogue-box {
 		width: 100%;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-lg);
 		padding: 0.85rem;
@@ -4412,7 +4450,7 @@
 		position: relative;
 	}
 	.dialogue-box:hover {
-		background: rgba(30, 41, 59, 0.75);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.75);
 		border-color: rgba(255, 255, 255, 0.2);
 		transform: translateY(-2px);
 		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
@@ -4424,7 +4462,7 @@
 		border-left: 3px solid #10b981;
 	}
 	.dialogue-box.comm-card-story {
-		border-left: 3px solid #a855f7;
+		border-left: 3px solid var(--accent2, #a855f7);
 	}
 	.comm-header {
 		display: flex;
@@ -4448,12 +4486,12 @@
 		color: #34d399;
 	}
 	.comm-badge.story {
-		background: rgba(168, 85, 247, 0.2);
-		color: #c084fc;
+		background: rgba(var(--accent2-rgb, 168, 85, 247), 0.2);
+		color: var(--accent2-soft, #c084fc);
 	}
-	.gm-avatar { width: 44px; height: 44px; aspect-ratio: 1 / 1; border-radius: 50%; object-fit: cover; border: 2px solid #a855f7; flex-shrink: 0; }
+	.gm-avatar { width: 44px; height: 44px; aspect-ratio: 1 / 1; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent2, #a855f7); flex-shrink: 0; }
 	.cipher-avatar { color: #34d399; border-color: #10b981 !important; }
-	.story-avatar { color: #c084fc; border-color: #a855f7 !important; }
+	.story-avatar { color: var(--accent2-soft, #c084fc); border-color: var(--accent2, #a855f7) !important; }
 	.dialogue-text { flex: 1; min-width: 0; }
 	.dialogue-text strong { font-size: var(--text-base); color: #f1f5f9; display: block; margin-bottom: 0.15rem; }
 	.dialogue-text p { margin: 0; font-size: var(--text-base); color: #cbd5e1; font-style: italic; line-height: 1.3; }
@@ -4471,10 +4509,10 @@
 
 	/* CHARACTER DETAIL MODAL */
 	.char-detail-modal {
-		background: rgba(15, 23, 42, 0.95);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.95);
 		backdrop-filter: blur(16px);
 		border: 1px solid rgba(255, 255, 255, 0.15);
-		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(99, 102, 241, 0.15);
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(var(--accent-rgb, 99, 102, 241), 0.15);
 		padding: 1.5rem;
 		max-width: 420px;
 		width: 100%;
@@ -4497,16 +4535,16 @@
 		object-fit: cover;
 		object-position: center top;
 		border-radius: 50%;
-		border: 2px solid #818cf8;
-		box-shadow: 0 0 15px rgba(129, 140, 248, 0.3);
+		border: 2px solid var(--accent-soft, #818cf8);
+		box-shadow: 0 0 15px rgba(var(--accent-soft-rgb, 129, 140, 248), 0.3);
 		flex-shrink: 0;
 	}
 	.char-detail-avatar.img-placeholder {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(30, 41, 59, 0.8);
-		color: #818cf8;
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.8);
+		color: var(--accent-soft, #818cf8);
 	}
 	.char-detail-info {
 		flex: 1;
@@ -4518,8 +4556,8 @@
 		font-weight: 800;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #818cf8;
-		background: rgba(99, 102, 241, 0.15);
+		color: var(--accent-soft, #818cf8);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.15);
 		padding: 0.15rem 0.5rem;
 		border-radius: 4px;
 		display: inline-block;
@@ -4569,7 +4607,7 @@
 
 	/* WORLD POINTS DETAIL MODAL */
 	.world-points-detail-modal {
-		background: rgba(15, 23, 42, 0.95);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.95);
 		backdrop-filter: blur(16px);
 		border: 1px solid rgba(239, 68, 68, 0.25);
 		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(239, 68, 68, 0.15);
@@ -4645,7 +4683,7 @@
 	.world-pts-tip-box {
 		display: flex;
 		gap: 0.75rem;
-		background: rgba(30, 41, 59, 0.6);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-md);
 		padding: 0.85rem;
@@ -4662,6 +4700,18 @@
 	/* MAP */
 	.map-wrapper { position: relative; border-radius: var(--radius-lg); overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
 	.map-img { width: 100%; height: 260px; object-fit: cover; display: block; }
+	.map-img.full { height: auto; object-fit: contain; }
+	.trivia-question {
+		margin: 0.25rem 0 0.5rem;
+		padding: 0.75rem 0.9rem;
+		font-size: var(--text-lg);
+		font-weight: 700;
+		line-height: 1.4;
+		color: #f8fafc;
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.12);
+		border-left: 3px solid var(--accent, #6366f1);
+		border-radius: var(--radius-sm);
+	}
 	.map-img-placeholder {
 		flex-direction: column;
 		gap: 0.5rem;
@@ -4673,8 +4723,8 @@
 	.hotspot-pin {
 		position: absolute;
 		transform: translate(-50%, -50%);
-		background: rgba(15, 23, 42, 0.85);
-		border: 1px solid #818cf8;
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.85);
+		border: 1px solid var(--accent-soft, #818cf8);
 		color: #fff;
 		font-size: var(--text-sm);
 		font-weight: 700;
@@ -4685,7 +4735,7 @@
 		white-space: nowrap;
 	}
 	.hotspot-modal {
-		background: rgba(15, 23, 42, 0.9);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.9);
 		border: 1px solid rgba(255,255,255,0.15);
 		border-radius: var(--radius-lg);
 		padding: 1rem;
@@ -4701,7 +4751,7 @@
 	.subtabs-bar {
 		display: flex;
 		gap: 0.5rem;
-		background: rgba(15, 23, 42, 0.7);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.7);
 		padding: 0.35rem;
 		border-radius: var(--radius-lg);
 		border: 1px solid rgba(255, 255, 255, 0.08);
@@ -4729,14 +4779,14 @@
 		background: rgba(255, 255, 255, 0.04);
 	}
 	.subtab-btn.active {
-		background: rgba(99, 102, 241, 0.2);
-		border-color: rgba(99, 102, 241, 0.4);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.2);
+		border-color: rgba(var(--accent-rgb, 99, 102, 241), 0.4);
 		color: #fff;
-		box-shadow: 0 2px 10px rgba(99, 102, 241, 0.2);
+		box-shadow: 0 2px 10px rgba(var(--accent-rgb, 99, 102, 241), 0.2);
 	}
 	.subtab-counter {
-		background: #818cf8;
-		color: #0f172a;
+		background: var(--accent-soft, #818cf8);
+		color: var(--panel-deep, #0f172a);
 		font-size: var(--text-xs);
 		font-weight: 800;
 		padding: 0.1rem 0.4rem;
@@ -4767,9 +4817,9 @@
 		margin-bottom: 1.25rem;
 	}
 	.alert-feed-card {
-		background: rgba(30, 41, 59, 0.7);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.7);
 		border: 1px solid rgba(255, 255, 255, 0.12);
-		border-left: 4px solid #38bdf8;
+		border-left: 4px solid var(--info, #38bdf8);
 		border-radius: var(--radius-lg);
 		padding: 1rem;
 		display: flex;
@@ -4806,7 +4856,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(99, 102, 241, 0.3);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.3);
 		color: #c7d2fe;
 	}
 	.afc-speaker strong {
@@ -4818,9 +4868,9 @@
 		font-weight: 800;
 		padding: 0.15rem 0.5rem;
 		border-radius: var(--radius-pill);
-		background: rgba(56, 189, 248, 0.2);
-		color: #38bdf8;
-		border: 1px solid rgba(56, 189, 248, 0.4);
+		background: rgba(var(--info-rgb, 56, 189, 248), 0.2);
+		color: var(--info, #38bdf8);
+		border: 1px solid rgba(var(--info-rgb, 56, 189, 248), 0.4);
 	}
 	.afc-badge.warning {
 		background: rgba(245, 158, 11, 0.2);
@@ -4859,7 +4909,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px dashed rgba(148, 163, 184, 0.3);
 		clip-path: var(--corner-cut);
 		padding: 1rem;
@@ -4871,12 +4921,12 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(148, 163, 184, 0.15);
 		clip-path: var(--corner-cut);
 		padding: 0.85rem 1rem;
 	}
-	.feed-entry-icon { color: #a5b4fc; flex-shrink: 0; }
+	.feed-entry-icon { color: var(--accent-pale, #a5b4fc); flex-shrink: 0; }
 	.feed-entry p { margin: 0; font-size: var(--text-base); color: #e2e8f0; line-height: 1.4; }
 
 	/* VOTED RESULT CARDS (EXPANDABLE) */
@@ -4886,7 +4936,7 @@
 		gap: 1rem;
 	}
 	.vote-result-card {
-		background: rgba(15, 23, 42, 0.8);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.8);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-lg);
 		overflow: hidden;
@@ -4894,8 +4944,8 @@
 		box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
 	}
 	.vote-result-card.expanded {
-		border-color: rgba(168, 85, 247, 0.4);
-		box-shadow: 0 8px 25px rgba(168, 85, 247, 0.15);
+		border-color: rgba(var(--accent2-rgb, 168, 85, 247), 0.4);
+		box-shadow: 0 8px 25px rgba(var(--accent2-rgb, 168, 85, 247), 0.15);
 	}
 	.vote-card-header {
 		width: 100%;
@@ -4939,7 +4989,7 @@
 		color: #94a3b8;
 	}
 	.choice-val {
-		color: #c084fc;
+		color: var(--accent2-soft, #c084fc);
 		font-weight: 700;
 	}
 	.v-expand-toggle {
@@ -4950,7 +5000,7 @@
 		padding-top: 0.5rem;
 		border-top: 1px solid rgba(255, 255, 255, 0.06);
 		font-size: var(--text-sm);
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 		font-weight: 700;
 	}
 	.toggle-icon {
@@ -4963,7 +5013,7 @@
 		flex-direction: column;
 		gap: 0.85rem;
 		border-top: 1px dashed rgba(255, 255, 255, 0.08);
-		background: rgba(30, 41, 59, 0.35);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.35);
 	}
 	.vote-question-box {
 		padding-top: 0.85rem;
@@ -4990,7 +5040,7 @@
 		gap: 0.75rem;
 	}
 	.option-stat-box {
-		background: rgba(15, 23, 42, 0.6);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-md);
 		padding: 0.75rem 0.85rem;
@@ -4999,8 +5049,8 @@
 		gap: 0.45rem;
 	}
 	.option-stat-box.user-selected {
-		border-color: rgba(168, 85, 247, 0.45);
-		background: rgba(168, 85, 247, 0.08);
+		border-color: rgba(var(--accent2-rgb, 168, 85, 247), 0.45);
+		background: rgba(var(--accent2-rgb, 168, 85, 247), 0.08);
 	}
 	.opt-stat-header {
 		display: flex;
@@ -5024,8 +5074,8 @@
 		font-size: var(--text-xs);
 		font-weight: 800;
 		color: #d8b4fe;
-		background: rgba(168, 85, 247, 0.25);
-		border: 1px solid rgba(168, 85, 247, 0.4);
+		background: rgba(var(--accent2-rgb, 168, 85, 247), 0.25);
+		border: 1px solid rgba(var(--accent2-rgb, 168, 85, 247), 0.4);
 		padding: 0.1rem 0.4rem;
 		border-radius: var(--radius-xs);
 		letter-spacing: 0.04em;
@@ -5040,10 +5090,10 @@
 	.opt-pct {
 		font-size: var(--text-lg);
 		font-weight: 800;
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 	}
 	.option-stat-box.user-selected .opt-pct {
-		color: #c084fc;
+		color: var(--accent2-soft, #c084fc);
 	}
 	.opt-cnt {
 		font-size: var(--text-sm);
@@ -5058,12 +5108,12 @@
 	}
 	.opt-bar-fill {
 		height: 100%;
-		background: linear-gradient(90deg, #6366f1, #818cf8);
+		background: linear-gradient(90deg, var(--accent, #6366f1), var(--accent-soft, #818cf8));
 		border-radius: var(--radius-xs);
 		transition: width 0.5s ease-out;
 	}
 	.opt-bar-fill.highlight {
-		background: linear-gradient(90deg, #9333ea, #c084fc);
+		background: linear-gradient(90deg, var(--accent2-deep, #9333ea), var(--accent2-soft, #c084fc));
 	}
 
 	.vote-meta-footer {
@@ -5083,7 +5133,7 @@
 	}
 
 	.empty-votes-card {
-		background: rgba(30, 41, 59, 0.4);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.4);
 		border: 1px dashed rgba(255, 255, 255, 0.15);
 		border-radius: var(--radius-lg);
 		padding: 2rem 1.5rem;
@@ -5120,7 +5170,7 @@
 	.item-card {
 		display: flex;
 		flex-direction: column;
-		background: rgba(15, 23, 42, 0.85);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.85);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-lg);
 		overflow: hidden;
@@ -5128,12 +5178,12 @@
 		transition: transform 0.2s ease, border-color 0.2s ease;
 	}
 	.item-card:hover {
-		border-color: rgba(129, 140, 248, 0.35);
+		border-color: rgba(var(--accent-soft-rgb, 129, 140, 248), 0.35);
 	}
 	.item-cover-wrapper {
 		width: 100%;
 		aspect-ratio: 16 / 9;
-		background: #090d16;
+		background: var(--bg-app, #090d16);
 		overflow: hidden;
 		position: relative;
 		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -5152,7 +5202,7 @@
 		gap: 0.5rem;
 		color: #64748b;
 		font-size: var(--text-sm);
-		background: radial-gradient(circle at center, rgba(30, 41, 59, 0.6), #090d16);
+		background: radial-gradient(circle at center, rgba(var(--panel-rgb, 30, 41, 59), 0.6), var(--bg-app, #090d16));
 	}
 	.item-info {
 		padding: 1.15rem;
@@ -5166,11 +5216,11 @@
 	
 	.item-desc-blocks { display: flex; flex-direction: column; gap: 0.75rem; }
 	.item-desc-block p { margin: 0.2rem 0 0 0; font-size: var(--text-base); color: #cbd5e1; line-height: 1.5; }
-	.item-desc-label { display: block; font-size: var(--text-xs); color: #818cf8; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; }
+	.item-desc-label { display: block; font-size: var(--text-xs); color: var(--accent-soft, #818cf8); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; }
 	.item-desc-toggle {
 		background: none;
 		border: none;
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 		font-size: var(--text-sm);
 		font-weight: 700;
 		padding: 0.25rem 0;
@@ -5183,7 +5233,7 @@
 	
 	.audio-box.centered {
 		margin-top: 0.5rem;
-		background: rgba(30, 41, 59, 0.4);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.4);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-md);
 		padding: 1rem;
@@ -5206,7 +5256,7 @@
 		height: 100%;
 		object-fit: cover;
 	}
-	.audio-title { font-size: var(--text-sm); color: #c084fc; font-weight: 700; display: block; }
+	.audio-title { font-size: var(--text-sm); color: var(--accent2-soft, #c084fc); font-weight: 700; display: block; }
 	.audio-player { width: 100%; max-width: 380px; height: 36px; border-radius: var(--radius-xs); }
 	.audio-pending-badge {
 		font-size: var(--text-xs);
@@ -5218,7 +5268,7 @@
 	}
 
 	/* PROFILE */
-	.profile-card { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255,255,255,0.1); padding: 1.5rem; border-radius: var(--radius-lg); text-align: center; margin-bottom: 1.5rem; }
+	.profile-card { background: rgba(var(--panel-rgb, 30, 41, 59), 0.5); border: 1px solid rgba(255,255,255,0.1); padding: 1.5rem; border-radius: var(--radius-lg); text-align: center; margin-bottom: 1.5rem; }
 	.p-avatar {
 		width: 92px;
 		height: 92px;
@@ -5226,7 +5276,7 @@
 		object-fit: cover;
 		object-position: center 15%;
 		border-radius: 50%;
-		border: 3px solid #6366f1;
+		border: 3px solid var(--accent, #6366f1);
 		margin: 0 auto 0.75rem auto;
 		display: block;
 		flex-shrink: 0;
@@ -5236,7 +5286,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(15, 23, 42, 0.6);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.6);
 	}
 	.profile-card h3 { margin: 0 0 0.25rem 0; font-size: var(--text-xl); }
 	.p-fac { margin: 0 0 0.75rem 0; font-size: var(--text-md); color: #94a3b8; }
@@ -5244,7 +5294,7 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.6rem;
-		background: rgba(15, 23, 42, 0.6);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-pill);
 		padding: 0.35rem 0.85rem;
@@ -5268,8 +5318,8 @@
 	}
 
 	.journal-list { display: flex; flex-direction: column; gap: 1rem; }
-	.journal-card { background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.1); padding: 1rem; border-radius: var(--radius-md); font-size: var(--text-md); margin-bottom: 0.75rem; }
-	.journal-card h4 { margin: 0 0 0.4rem 0; font-size: var(--text-lg); color: #818cf8; }
+	.journal-card { background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.75); border: 1px solid rgba(255, 255, 255, 0.1); padding: 1rem; border-radius: var(--radius-md); font-size: var(--text-md); margin-bottom: 0.75rem; }
+	.journal-card h4 { margin: 0 0 0.4rem 0; font-size: var(--text-lg); color: var(--accent-soft, #818cf8); }
 	.j-html { color: #cbd5e1; line-height: 1.4; }
 	.empty-msg { font-size: var(--text-base); color: #94a3b8; font-style: italic; }
 
@@ -5285,9 +5335,9 @@
 		cursor: pointer;
 	}
 	.logout-btn.reset-btn {
-		background: rgba(99, 102, 241, 0.15);
-		border-color: rgba(99, 102, 241, 0.4);
-		color: #818cf8;
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.15);
+		border-color: rgba(var(--accent-rgb, 99, 102, 241), 0.4);
+		color: var(--accent-soft, #818cf8);
 		margin-top: 1rem;
 		margin-bottom: 0.5rem;
 	}
@@ -5308,7 +5358,7 @@
 		box-sizing: border-box;
 	}
 	.modal-card {
-		background: #0f172a;
+		background: var(--panel-deep, #0f172a);
 		border: 1px solid rgba(255, 255, 255, 0.15);
 		border-radius: var(--radius-lg);
 		padding: 1.5rem;
@@ -5386,7 +5436,7 @@
 	}
 	.faction-member-row:last-child { border-bottom: none; }
 	.fm-rank { font-size: var(--text-xs); color: #64748b; width: 1.3rem; flex-shrink: 0; }
-	.fm-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: rgba(99, 102, 241, 0.12); }
+	.fm-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: rgba(var(--accent-rgb, 99, 102, 241), 0.12); }
 	.fm-name { flex: 1; font-size: var(--text-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.fm-xp { font-size: var(--text-xs); color: #94a3b8; flex-shrink: 0; }
 
@@ -5404,8 +5454,8 @@
 		box-sizing: border-box;
 	}
 	.narrative-card {
-		background: rgba(15, 23, 42, 0.9);
-		border: 1px solid rgba(129, 140, 248, 0.35);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.9);
+		border: 1px solid rgba(var(--accent-soft-rgb, 129, 140, 248), 0.35);
 		border-radius: var(--radius-lg);
 		padding: 1.5rem;
 		width: 100%;
@@ -5444,13 +5494,13 @@
 		font-weight: 800;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-		background: rgba(129, 140, 248, 0.18);
-		color: #a5b4fc;
+		background: rgba(var(--accent-soft-rgb, 129, 140, 248), 0.18);
+		color: var(--accent-pale, #a5b4fc);
 		padding: 0.25rem 0.55rem;
 		border-radius: var(--radius-pill);
 	}
 	.narrative-speaker { display: flex; align-items: center; gap: 0.85rem; }
-	.narrative-speaker-avatar { width: 56px; height: 56px; border-radius: var(--radius-md); object-fit: cover; border: 2px solid #818cf8; flex-shrink: 0; box-shadow: 0 0 15px rgba(129, 140, 248, 0.3); }
+	.narrative-speaker-avatar { width: 56px; height: 56px; border-radius: var(--radius-md); object-fit: cover; border: 2px solid var(--accent-soft, #818cf8); flex-shrink: 0; box-shadow: 0 0 15px rgba(var(--accent-soft-rgb, 129, 140, 248), 0.3); }
 	.narrative-speaker-info { display: flex; flex-direction: column; gap: 0.1rem; }
 	.narrative-speaker-info strong { font-size: var(--text-lg); color: #fff; }
 	.narrative-speaker-info span { font-size: var(--text-sm); color: #94a3b8; }
@@ -5493,7 +5543,7 @@
 		box-sizing: border-box;
 	}
 	.milestone-overlay-card {
-		background: rgba(15, 23, 42, 0.96);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.96);
 		border: 1px solid rgba(251, 191, 36, 0.45);
 		border-radius: var(--radius-lg);
 		padding: 1.5rem;
@@ -5581,7 +5631,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		background: rgba(30, 41, 59, 0.6);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-md);
 		padding: 0.6rem 0.8rem;
@@ -5620,7 +5670,7 @@
 		font-size: 0.72rem;
 		font-weight: 700;
 		letter-spacing: 0.08em;
-		color: #a5b4fc;
+		color: var(--accent-pale, #a5b4fc);
 		text-transform: uppercase;
 	}
 	.milestone-narrative-content {
@@ -5633,9 +5683,9 @@
 	}
 	.milestone-narrative-content :global(p) { margin: 0; }
 	.milestone-narrative-content :global(.tip-box) {
-		background: rgba(99, 102, 241, 0.12);
-		border: 1px solid rgba(99, 102, 241, 0.35);
-		border-left: 3px solid #818cf8;
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.12);
+		border: 1px solid rgba(var(--accent-rgb, 99, 102, 241), 0.35);
+		border-left: 3px solid var(--accent-soft, #818cf8);
 		border-radius: var(--radius-sm);
 		padding: 0.75rem;
 		font-size: 0.82rem;
@@ -5689,7 +5739,7 @@
 	.modal-form { display: flex; flex-direction: column; gap: 0.6rem; }
 	.vote-options { display: flex; flex-direction: column; gap: 0.5rem; }
 	.vote-btn {
-		background: rgba(30, 41, 59, 0.6);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.6);
 		border: 1px solid rgba(255, 255, 255, 0.1);
 		padding: 0.75rem;
 		border-radius: var(--radius-sm);
@@ -5699,9 +5749,9 @@
 		text-align: left;
 	}
 	.vote-btn.active {
-		background: rgba(99, 102, 241, 0.25);
-		border-color: #6366f1;
-		color: #818cf8;
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.25);
+		border-color: var(--accent, #6366f1);
+		color: var(--accent-soft, #818cf8);
 	}
 	.modal-close { margin-top: 0.5rem; }
 
@@ -5720,7 +5770,7 @@
 	.giocchi-thinking {
 		margin: 0;
 		font-size: var(--text-sm);
-		color: #a78bfa;
+		color: var(--accent2-soft, #a78bfa);
 		text-align: center;
 		animation: giocchi-pulse 1.8s ease-in-out infinite;
 	}
@@ -5764,7 +5814,7 @@
 		text-align: center;
 	}
 	.ai-countdown-text strong {
-		color: #38bdf8;
+		color: var(--info, #38bdf8);
 	}
 	.quick-fallback-btn {
 		display: inline-flex;
@@ -5812,7 +5862,7 @@
 	}
 	.giocchi-popup-card {
 		background: linear-gradient(145deg, #161233 0%, #0c1020 100%);
-		border: 1px solid rgba(192, 132, 252, 0.45);
+		border: 1px solid rgba(var(--accent2-soft-rgb, 192, 132, 252), 0.45);
 		width: 100%;
 		max-width: 460px;
 		max-height: calc(100dvh - 3rem);
@@ -5824,7 +5874,7 @@
 		gap: 1.2rem;
 		margin: auto 0;
 		box-sizing: border-box;
-		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(168, 85, 247, 0.2);
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(var(--accent2-rgb, 168, 85, 247), 0.2);
 	}
 	@media (max-width: 480px) {
 		.giocchi-overlay {
@@ -5849,9 +5899,9 @@
 		width: 50px;
 		height: 50px;
 		border-radius: 50%;
-		border: 2px solid #c084fc;
+		border: 2px solid var(--accent2-soft, #c084fc);
 		object-fit: cover;
-		box-shadow: 0 0 14px rgba(192, 132, 252, 0.45);
+		box-shadow: 0 0 14px rgba(var(--accent2-soft-rgb, 192, 132, 252), 0.45);
 		flex-shrink: 0;
 	}
 	.giocchi-popup-header-info {
@@ -5866,7 +5916,7 @@
 		font-size: 0.65rem;
 		font-weight: 800;
 		letter-spacing: 0.08em;
-		color: #c084fc;
+		color: var(--accent2-soft, #c084fc);
 		text-transform: uppercase;
 	}
 	.giocchi-popup-title {
@@ -5884,13 +5934,13 @@
 		text-overflow: ellipsis;
 	}
 	.giocchi-popup-xp {
-		background: rgba(168, 85, 247, 0.25);
+		background: rgba(var(--accent2-rgb, 168, 85, 247), 0.25);
 		color: #e9d5ff;
 		font-size: 0.9rem;
 		font-weight: 800;
 		padding: 0.35rem 0.8rem;
 		border-radius: 9999px;
-		border: 1px solid rgba(192, 132, 252, 0.45);
+		border: 1px solid rgba(var(--accent2-soft-rgb, 192, 132, 252), 0.45);
 		flex-shrink: 0;
 	}
 	.giocchi-popup-scrollable-body {
@@ -5904,7 +5954,7 @@
 	}
 	.giocchi-popup-quote {
 		background: rgba(0, 0, 0, 0.4);
-		border-left: 3px solid #38bdf8;
+		border-left: 3px solid var(--info, #38bdf8);
 		border-radius: 0 0.5rem 0.5rem 0;
 		padding: 0.85rem 1rem;
 		text-align: left;
@@ -5913,7 +5963,7 @@
 		display: block;
 		font-size: 0.72rem;
 		font-weight: 700;
-		color: #38bdf8;
+		color: var(--info, #38bdf8);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		margin-bottom: 0.25rem;
@@ -5956,7 +6006,7 @@
 		padding-top: 0.75rem;
 		border-top: 1px solid rgba(255, 255, 255, 0.08);
 		font-size: 0.76rem;
-		color: #a78bfa;
+		color: var(--accent2-soft, #a78bfa);
 		text-align: left;
 	}
 	.giocchi-popup-comm-notice {
@@ -5998,7 +6048,7 @@
 		padding: 0.85rem;
 		font-size: 1rem;
 		font-weight: 700;
-		background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%);
+		background: linear-gradient(135deg, var(--accent2-deep, #7c3aed) 0%, var(--accent, #6366f1) 100%);
 		border: 1px solid rgba(255, 255, 255, 0.2);
 		border-radius: var(--radius-md);
 		color: #ffffff;
@@ -6020,7 +6070,7 @@
 		transform: translateX(-50%);
 		width: 100%;
 		max-width: 480px;
-		background: rgba(15, 23, 42, 0.92);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.92);
 		backdrop-filter: blur(12px);
 		border-top: 1px solid rgba(255, 255, 255, 0.08);
 		display: flex;
@@ -6043,7 +6093,7 @@
 		font-family: inherit;
 		transition: color 0.15s ease;
 	}
-	.nav-item.active { color: #818cf8; }
+	.nav-item.active { color: var(--accent-soft, #818cf8); }
 	/* 3.3: el cambio de tab antes era instantáneo, sin ninguna transición —
 	   el ícono activo ahora escala y "rebota" levemente al entrar. */
 	.nav-icon {
@@ -6057,7 +6107,7 @@
 		height: 1.1em;
 		vertical-align: middle;
 		margin-left: 3px;
-		background: #38bdf8;
+		background: var(--info, #38bdf8);
 		border-radius: 1px;
 		animation: cursorBlink 0.65s infinite alternate;
 	}
@@ -6077,7 +6127,7 @@
 	.code-reward-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(10, 15, 29, 0.85);
+		background: rgba(var(--overlay-rgb, 10, 15, 29), 0.85);
 		backdrop-filter: blur(8px);
 		display: flex;
 		align-items: flex-start;
@@ -6090,8 +6140,8 @@
 		animation: fadeIn 0.25s ease-out;
 	}
 	.code-reward-card {
-		background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
-		border: 1px solid rgba(56, 189, 248, 0.35);
+		background: linear-gradient(180deg, var(--panel, #1e293b) 0%, var(--panel-deep, #0f172a) 100%);
+		border: 1px solid rgba(var(--info-rgb, 56, 189, 248), 0.35);
 		border-radius: var(--radius-lg);
 		padding: 1.5rem;
 		width: 100%;
@@ -6101,7 +6151,7 @@
 		-webkit-overflow-scrolling: touch;
 		margin: auto 0;
 		box-sizing: border-box;
-		box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.6), 0 0 30px rgba(56, 189, 248, 0.15);
+		box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.6), 0 0 30px rgba(var(--info-rgb, 56, 189, 248), 0.15);
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
@@ -6156,9 +6206,9 @@
 		font-size: var(--text-xs);
 		font-weight: 700;
 		letter-spacing: 0.08em;
-		color: #38bdf8;
-		background: rgba(56, 189, 248, 0.12);
-		border: 1px solid rgba(56, 189, 248, 0.3);
+		color: var(--info, #38bdf8);
+		background: rgba(var(--info-rgb, 56, 189, 248), 0.12);
+		border: 1px solid rgba(var(--info-rgb, 56, 189, 248), 0.3);
 		padding: 0.3rem 0.75rem;
 		border-radius: var(--radius-pill);
 	}
@@ -6191,19 +6241,19 @@
 		gap: 0.35rem;
 	}
 	.stat-pill.xp {
-		background: rgba(99, 102, 241, 0.2);
-		border: 1px solid rgba(99, 102, 241, 0.4);
-		color: #a5b4fc;
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.2);
+		border: 1px solid rgba(var(--accent-rgb, 99, 102, 241), 0.4);
+		color: var(--accent-pale, #a5b4fc);
 	}
 	.stat-pill.cp {
-		background: rgba(56, 189, 248, 0.2);
-		border: 1px solid rgba(56, 189, 248, 0.4);
+		background: rgba(var(--info-rgb, 56, 189, 248), 0.2);
+		border: 1px solid rgba(var(--info-rgb, 56, 189, 248), 0.4);
 		color: #7dd3fc;
 	}
 	.unlocked-mission-preview {
-		background: rgba(15, 23, 42, 0.75);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.75);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-left: 4px solid #38bdf8;
+		border-left: 4px solid var(--info, #38bdf8);
 		border-radius: var(--radius-md);
 		padding: 0.85rem 1rem;
 		display: flex;
@@ -6219,7 +6269,7 @@
 	.ump-tag {
 		font-size: 0.68rem;
 		font-weight: 700;
-		color: #38bdf8;
+		color: var(--info, #38bdf8);
 		letter-spacing: 0.05em;
 	}
 	.ump-type-tag {
@@ -6230,7 +6280,7 @@
 		background: rgba(255, 255, 255, 0.08);
 		color: #94a3b8;
 	}
-	.ump-type-tag.ai_prompt_challenge { color: #c084fc; background: rgba(192, 132, 252, 0.15); }
+	.ump-type-tag.ai_prompt_challenge { color: var(--accent2-soft, #c084fc); background: rgba(var(--accent2-soft-rgb, 192, 132, 252), 0.15); }
 	.ump-type-tag.collective_vote { color: #60a5fa; background: rgba(96, 165, 250, 0.15); }
 	.ump-type-tag.trivia_quiz { color: #fbbf24; background: rgba(251, 191, 36, 0.15); }
 	.ump-type-tag.dice_check { color: #34d399; background: rgba(52, 211, 153, 0.15); }
@@ -6285,7 +6335,7 @@
 	}
 
 	.premium-header-bar {
-		background: rgba(15, 23, 42, 0.65);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.65);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-lg);
 		padding: 1rem 1.15rem;
@@ -6333,7 +6383,7 @@
 	}
 
 	.vendor-item {
-		background: linear-gradient(135deg, rgba(30, 41, 59, 0.55) 0%, rgba(15, 23, 42, 0.75) 100%);
+		background: linear-gradient(135deg, rgba(var(--panel-rgb, 30, 41, 59), 0.55) 0%, rgba(var(--panel-deep-rgb, 15, 23, 42), 0.75) 100%);
 		border: 1px solid rgba(255, 255, 255, 0.09);
 		border-radius: var(--radius-lg);
 		padding: 0.95rem 1rem;
@@ -6345,13 +6395,13 @@
 	}
 
 	.vendor-item:hover {
-		border-color: rgba(99, 102, 241, 0.35);
-		background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
+		border-color: rgba(var(--accent-rgb, 99, 102, 241), 0.35);
+		background: linear-gradient(135deg, rgba(var(--panel-rgb, 30, 41, 59), 0.7) 0%, rgba(var(--panel-deep-rgb, 15, 23, 42), 0.85) 100%);
 		transform: translateY(-1px);
 	}
 
 	.vendor-logo-box {
-		background: rgba(15, 23, 42, 0.9);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.9);
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: var(--radius-md);
 		height: 62px;
@@ -6469,7 +6519,7 @@
 	}
 
 	.vendors-empty {
-		background: rgba(15, 23, 42, 0.5);
+		background: rgba(var(--panel-deep-rgb, 15, 23, 42), 0.5);
 		border: 1px dashed rgba(255, 255, 255, 0.1);
 		border-radius: var(--radius-md);
 		padding: 2rem;

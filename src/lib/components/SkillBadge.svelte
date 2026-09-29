@@ -111,8 +111,8 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.35rem;
-		background: rgba(99, 102, 241, 0.18);
-		border: 1px solid rgba(129, 140, 248, 0.35);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.18);
+		border: 1px solid rgba(var(--accent-soft-rgb, 129, 140, 248), 0.35);
 		color: #e0e7ff;
 		padding: 0.15rem 0.45rem;
 		border-radius: var(--radius-xs, 4px);
@@ -127,11 +127,11 @@
 	}
 
 	.skill-badge-btn:hover {
-		background: rgba(99, 102, 241, 0.35);
-		border-color: #818cf8;
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.35);
+		border-color: var(--accent-soft, #818cf8);
 		color: #fff;
 		transform: translateY(-1px);
-		box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+		box-shadow: 0 2px 8px rgba(var(--accent-rgb, 99, 102, 241), 0.3);
 	}
 
 	.skill-badge-btn:active {
@@ -147,14 +147,14 @@
 		background: transparent;
 		border: none;
 		padding: 0;
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 		text-decoration: underline dotted;
 		text-underline-offset: 3px;
 	}
 
 	.skill-badge-btn.text:hover {
 		background: transparent;
-		color: #c7d2fe;
+		color: var(--accent-pale, #c7d2fe);
 		box-shadow: none;
 	}
 
@@ -162,8 +162,8 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.35rem;
-		background: rgba(99, 102, 241, 0.18);
-		border: 1px solid rgba(129, 140, 248, 0.25);
+		background: rgba(var(--accent-rgb, 99, 102, 241), 0.18);
+		border: 1px solid rgba(var(--accent-soft-rgb, 129, 140, 248), 0.25);
 		color: #e0e7ff;
 		padding: 0.15rem 0.45rem;
 		border-radius: var(--radius-xs, 4px);
@@ -176,7 +176,7 @@
 	.skill-code {
 		letter-spacing: 0.04em;
 		font-weight: 800;
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 	}
 
 	.skill-val {
@@ -193,7 +193,7 @@
 
 	.skill-badge-btn:hover .skill-info-icon {
 		opacity: 1;
-		color: #c7d2fe;
+		color: var(--accent-pale, #c7d2fe);
 	}
 
 	/* MODAL GLASSMORPHISM */
@@ -214,8 +214,8 @@
 	}
 
 	.skill-modal-card {
-		background: #0f172a;
-		border: 1px solid rgba(129, 140, 248, 0.3);
+		background: var(--panel-deep, #0f172a);
+		border: 1px solid rgba(var(--accent-soft-rgb, 129, 140, 248), 0.3);
 		border-radius: var(--radius-lg, 0.85rem);
 		padding: 1.5rem;
 		width: 100%;
@@ -223,7 +223,7 @@
 		max-height: calc(100dvh - 3rem);
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
-		box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), 0 0 20px rgba(99, 102, 241, 0.15);
+		box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), 0 0 20px rgba(var(--accent-rgb, 99, 102, 241), 0.15);
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
@@ -253,15 +253,15 @@
 	}
 
 	.skill-tag-pill {
-		background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(168, 85, 247, 0.3));
-		border: 1px solid #818cf8;
+		background: linear-gradient(135deg, rgba(var(--accent-rgb, 99, 102, 241), 0.3), rgba(var(--accent2-rgb, 168, 85, 247), 0.3));
+		border: 1px solid var(--accent-soft, #818cf8);
 		color: #fff;
 		font-size: var(--text-md, 0.85rem);
 		font-weight: 800;
 		padding: 0.35rem 0.65rem;
 		border-radius: var(--radius-sm, 0.5rem);
 		letter-spacing: 0.05em;
-		box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+		box-shadow: 0 0 10px rgba(var(--accent-rgb, 99, 102, 241), 0.3);
 	}
 
 	.skill-modal-titles {
@@ -274,7 +274,7 @@
 		font-size: var(--text-xs, 0.65rem);
 		font-weight: 800;
 		letter-spacing: 0.08em;
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 		text-transform: uppercase;
 	}
 
@@ -303,7 +303,7 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		background: rgba(30, 41, 59, 0.5);
+		background: rgba(var(--panel-rgb, 30, 41, 59), 0.5);
 		border: 1px solid rgba(255, 255, 255, 0.06);
 		padding: 0.5rem 0.75rem;
 		border-radius: var(--radius-sm, 0.5rem);
@@ -318,7 +318,7 @@
 	}
 
 	.val-num {
-		color: #818cf8;
+		color: var(--accent-soft, #818cf8);
 		font-size: var(--text-base, 0.78rem);
 		font-weight: 800;
 	}
@@ -326,7 +326,7 @@
 	.skill-modal-close-btn {
 		width: 100%;
 		padding: 0.65rem 1rem;
-		background: linear-gradient(135deg, #6366f1, #8b5cf6);
+		background: linear-gradient(135deg, var(--accent, #6366f1), #8b5cf6);
 		border: none;
 		border-radius: var(--radius-md, 0.75rem);
 		color: #fff;
@@ -334,12 +334,12 @@
 		font-weight: 700;
 		cursor: pointer;
 		transition: all 0.2s ease;
-		box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+		box-shadow: 0 4px 12px rgba(var(--accent-rgb, 99, 102, 241), 0.35);
 	}
 
 	.skill-modal-close-btn:hover {
 		opacity: 0.95;
-		box-shadow: 0 6px 16px rgba(99, 102, 241, 0.5);
+		box-shadow: 0 6px 16px rgba(var(--accent-rgb, 99, 102, 241), 0.5);
 	}
 
 	.mono {

@@ -3,14 +3,21 @@
 	import { page } from '$app/state';
 	import { subscribeToEventActivity } from '$lib/client/supabaseClient';
 	import QRCode from 'qrcode';
+	import { resolveEventCopy, resolveEventTheme, fillTemplate } from '$lib/eventCopy';
 
 	const { data } = $props();
+	const copy = $derived(resolveEventCopy(data.event));
+	const theme = $derived(resolveEventTheme(data.event));
+	const dash = $derived(copy.public_dashboard);
 
 	// URL de firma: siempre la misma base donde esté corriendo el servidor
 	// (localhost en dev, el dominio real en Netlify) — nunca hardcodeada.
 	let showQrModal = $state(false);
 	let qrDataUrl = $state('');
-	let treatyUrl = $derived(`${page.url.origin}/${data.event?.slug}/firmar-tratado`);
+	// Gamescon: QR de firma del Tratado. Otros eventos: QR de ingreso al juego.
+	let treatyUrl = $derived(
+		dash.treaty_enabled ? `${page.url.origin}/${data.event?.slug}/firmar-tratado` : `${page.url.origin}/${data.event?.slug}`
+	);
 
 	async function openQrModal() {
 		showQrModal = true;
@@ -24,11 +31,11 @@
 
 	function describeActivity(entry: any): string {
 		if (entry.type === 'item_unlocked_globally') return `¡Toda la comunidad desbloqueó "${entry.payload?.itemName}"!`;
-		if (entry.type === 'contact_scanned') return `${entry.payload?.scannerName || 'Un agente'} sumó un nuevo contacto a su red.`;
-		if (entry.type === 'milestone_reached') return `🏆 ${entry.payload?.playerName || 'Un agente'} alcanzó el Rango "${entry.payload?.rankTitle}".`;
+		if (entry.type === 'contact_scanned') return `${entry.payload?.scannerName || copy.player_noun_indef} sumó un nuevo contacto a su red.`;
+		if (entry.type === 'milestone_reached') return `🏆 ${entry.payload?.playerName || copy.player_noun_indef} alcanzó el Rango "${entry.payload?.rankTitle}".`;
 		if (entry.type === 'faction_lead_change') return `⚡ ¡${entry.payload?.factionName} tomó la delantera!`;
 		if (entry.type === 'ai_prompt_highlight') return `✨ ${entry.payload?.playerName || 'Un agente'} recibió una evaluación destacada de GIOCCHI en "${entry.payload?.missionTitle}".`;
-		if (entry.type === 'treaty_signed') return `🏛️ ${entry.payload?.playerName || 'Un agente'} firmó el Tratado Huizinga.`;
+		if (entry.type === 'treaty_signed') return fillTemplate(copy.feed_treaty_signed, { name: entry.payload?.playerName || copy.player_noun_indef });
 		if (entry.type === 'gm_alert') return entry.payload?.message || 'Transmisión del Game Master.';
 		return 'Nueva actividad registrada.';
 	}
@@ -69,8 +76,12 @@
 	// Mismo criterio que [event_slug]/+page.svelte: el color es identidad de
 	// facción (por posición en el catálogo), no cambia según el ranking.
 	const FACTION_COLORS = ['#22d3ee', '#f472b6', '#fb923c', '#a78bfa'];
+	const factionColorsConfig = $derived<Record<string, string>>(data.event?.config?.faction_colors || {});
 	const factionsWithColor = $derived(
-		(data.factions || []).map((f: any, idx: number) => ({ ...f, color: FACTION_COLORS[idx % FACTION_COLORS.length] }))
+		(data.factions || []).map((f: any, idx: number) => ({
+			...f,
+			color: factionColorsConfig[f.id] || FACTION_COLORS[idx % FACTION_COLORS.length]
+		}))
 	);
 	const sortedFactions = $derived(
 		[...factionsWithColor].sort((a: any, b: any) => (b.faction_points || 0) - (a.faction_points || 0))
@@ -79,24 +90,27 @@
 		return factionsWithColor.find((f: any) => f.id === factionId);
 	}
 	function honorBadge(rank: number): string {
-		return rank >= 5 ? 'Agente Master Huizinga' : 'Llave PRIME';
+		return dash.honor_badges.find((b) => rank >= b.min_rank)?.label || '';
 	}
+	const maxStopVisits = $derived(Math.max(1, ...(data.topStops || []).map((s: any) => s.visits)));
 </script>
 
 <svelte:head>
 	<title>{data.event?.title} — Tablero Global</title>
+	{#if theme.fontHref}<link rel="stylesheet" href={theme.fontHref} />{/if}
+	{#if theme.css}{@html `<style>${theme.css}</style>`}{/if}
 </svelte:head>
 
 <div class="dashboard">
 	<header class="dash-header">
-		<button class="qr-btn" onclick={openQrModal} title="Generar QR para firmar el Tratado" aria-label="Generar QR para firmar el Tratado">
-			📜 Generar QR para firma
+		<button class="qr-btn" onclick={openQrModal} title={dash.treaty_enabled ? 'Generar QR para firmar el Tratado' : dash.join_title} aria-label={dash.treaty_enabled ? 'Generar QR para firmar el Tratado' : dash.join_title}>
+			{dash.treaty_enabled ? '📜 Generar QR para firma' : `📱 ${dash.join_title}`}
 		</button>
 		<button class="refresh-btn" onclick={manualRefresh} disabled={refreshing} title="Actualizar ahora" aria-label="Actualizar ahora">
 			<span class:spin={refreshing}>⟳</span>
 		</button>
 		<h1>{data.event?.title}</h1>
-		<p class="dash-sub">Tablero de Estado Global — Transmisión en Vivo</p>
+		<p class="dash-sub">{dash.subtitle}</p>
 	</header>
 
 	{#if showQrModal}
@@ -104,10 +118,15 @@
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 		<div class="qr-overlay" onclick={() => (showQrModal = false)} role="presentation">
 			<div class="qr-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-				<h2>Firma el Tratado Huizinga</h2>
-				<p>Escanea con tu móvil (debes estar registrado en la Agencia).</p>
+				{#if dash.treaty_enabled}
+					<h2>Firma el Tratado Huizinga</h2>
+					<p>Escanea con tu móvil (debes estar registrado en la Agencia).</p>
+				{:else}
+					<h2>{dash.join_title}</h2>
+					<p>{dash.join_hint}</p>
+				{/if}
 				{#if qrDataUrl}
-					<img src={qrDataUrl} alt="Código QR para firmar el Tratado Huizinga" />
+					<img src={qrDataUrl} alt="Código QR: {dash.treaty_enabled ? 'firmar el Tratado' : dash.join_title}" />
 				{/if}
 				<p class="qr-url">{treatyUrl}</p>
 				<button class="close-btn" onclick={() => (showQrModal = false)}>Cerrar</button>
@@ -120,7 +139,7 @@
 	     columna derecha); Inercia + Facciones + Feed a la derecha, apiladas. -->
 	<div class="dashboard-body">
 		<section class="hof-panel">
-			<h2>Hall de la Fama — Precedencia de Honor {#if (data.hallOfFame || []).length}({data.hallOfFame.length}){/if}</h2>
+			<h2>{dash.hof_title} {#if (data.hallOfFame || []).length}({data.hallOfFame.length}){/if}</h2>
 			{#if (data.hallOfFame || []).length > 0}
 				<div class="hof-list">
 					{#each data.hallOfFame as player}
@@ -136,14 +155,14 @@
 					{/each}
 				</div>
 			{:else}
-				<p class="hof-empty">Todavía nadie alcanzó la Llave PRIME o el Rango Master.</p>
+				<p class="hof-empty">{dash.hof_empty}</p>
 			{/if}
 		</section>
 
 		<div class="dashboard-side">
 			<section class="inercia-panel">
 				<div class="inercia-label">
-					<span>{data.eventPoints?.display_name || 'Inercia Educación Tradicional'}</span>
+					<span>{data.eventPoints?.display_name || 'Medidor global'}</span>
 					<strong>{data.eventPoints?.current_points ?? '—'} / {data.eventPoints?.max_points ?? '—'}</strong>
 				</div>
 				<div class="inercia-bar-track">
@@ -152,7 +171,7 @@
 			</section>
 
 			<section class="factions-panel">
-				<h2>Ranking de Facciones</h2>
+				<h2>{dash.factions_title}</h2>
 				<div class="factions-list">
 					{#each sortedFactions as f, i}
 						<div class="faction-row">
@@ -165,6 +184,23 @@
 				</div>
 			</section>
 
+			{#if (data.topStops || []).length > 0}
+				<section class="factions-panel">
+					<h2>Guaridas más visitadas</h2>
+					<div class="factions-list">
+						{#each data.topStops as s (s.n)}
+							<div class="faction-row stop-row">
+								<span class="faction-rank">{s.n}</span>
+								<span class="faction-name">{s.vendorName}</span>
+								<span class="stop-bar"><span style="width: {(s.visits / maxStopVisits) * 100}%"></span></span>
+								<span class="faction-points">{s.visits}</span>
+							</div>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
+			{#if dash.treaty_enabled}
 			<section class="treaty-panel">
 				<h2>Tratado Huizinga — Firmantes ({data.treaty?.count ?? 0})</h2>
 				{#if (data.treaty?.signatures || []).length > 0}
@@ -179,9 +215,10 @@
 					<p class="treaty-empty">Nadie ha firmado el Tratado todavía.</p>
 				{/if}
 			</section>
+			{/if}
 
 			<section class="feed-panel">
-				<h2>Transmisiones Recientes</h2>
+				<h2>{dash.feed_title}</h2>
 				{#if activityFeed.length > 0}
 					<div class="feed-list">
 						{#each activityFeed as entry}
@@ -312,4 +349,8 @@
 	.feed-list { display: flex; flex-direction: column; gap: 0.5rem; }
 	.feed-entry { margin: 0; background: rgba(255,255,255,0.03); border-radius: 0.5rem; padding: 0.7rem 1rem; font-size: 0.95rem; color: #cbd5e1; }
 	.feed-empty { color: #64748b; font-size: 0.95rem; }
+	.stop-row { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) 30% 2.5rem; align-items: center; gap: 0.75rem; }
+	.stop-bar { height: 0.6rem; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+	.stop-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent, #f59e0b), var(--accent2, #ef4444)); }
+	.dashboard h1, .dashboard h2 { font-family: var(--font-display, inherit); }
 </style>

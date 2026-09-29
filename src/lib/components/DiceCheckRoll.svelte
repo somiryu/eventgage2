@@ -185,4 +185,17 @@
 		color: inherit;
 		opacity: 0.9;
 	}
+	/* El .primary-btn de la página no alcanza a este componente (estilos
+	   con scope), así que el botón "Continuar" trae el suyo propio. */
+	.primary-btn {
+		width: 100%;
+		padding: 0.75rem 1rem;
+		border: none;
+		border-radius: 0.75rem;
+		font-weight: 800;
+		font-size: 0.95rem;
+		color: #fff;
+		cursor: pointer;
+		background: linear-gradient(135deg, var(--accent, #6366f1), var(--accent2, #a855f7));
+	}
 </style>
